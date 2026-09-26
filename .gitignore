@@ -37,3 +37,6 @@ dist-ssr
 
 # Vercel
 .vercel
+
+# Internal business documents: kept on disk, never committed
+LamportPay-Marketing-Plan.pdf
