@@ -2,8 +2,9 @@
  * Shared helpers for the end-to-end API suite.
  *
  * The suite runs against a running server (dev server by default) and never
- * uses real funds: only read-only Jupiter previews/orders and mock payout partner
- * fallbacks are exercised. No transaction is ever signed or executed.
+ * uses real funds: only read-only Jupiter previews/orders and unauthenticated
+ * or unsigned payment/webhook requests (which must be rejected) are exercised.
+ * No transaction is ever signed or executed.
  */
 
 export const BASE_URL = process.env["E2E_BASE_URL"] ?? "http://localhost:8080";
@@ -49,7 +50,7 @@ export async function api<T = Record<string, unknown>>(
 }
 
 export type IntegrationStatus = {
-  providers: Array<{ name: string; configured: boolean; mode: "sandbox" | "mock" }>;
+  providers: Array<{ name: string; configured: boolean; mode: "sandbox" | "live" | "mock" }>;
   endpoints: Array<{ path: string; provider: string; mode: string }>;
 };
 
@@ -69,7 +70,10 @@ export function providerMode(status: IntegrationStatus, name: string) {
 export const SECRET_LEAK_PATTERNS = [
   /x-api-key/i,
   /JUPITER_API_KEY\s*[:=]\s*\S/i,
-  /PAYOUT_API_KEY\s*[:=]\s*\S/i,
+  /STABLES_API_KEY\s*[:=]\s*\S/i,
+  /STABLES_WEBHOOK_SECRET\s*[:=]\s*\S/i,
+  /\bsti_(test|live)_[A-Za-z0-9]/,
+  /\bwhsec_[A-Za-z0-9+/]/,
   /\bsk_live\b/i,
 ];
 

@@ -792,25 +792,18 @@ Do not add:
 
 Build the app cleanly and make all pages connected through navigation.
 
-This project was built with [Lovable](https://lovable.dev).
-
-**Live app**: https://lamportpay.lovable.app
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/1dfad1b7-e30c-4233-9276-65c1ba5b7e9b).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Requires Node.js 22+ and npm.
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
+npm install
+cp .env.example .env   # then fill in the values
+npm run dev            # http://localhost:8080
 ```
+
+## Deployment (Vercel)
+
+`npm run build` uses the Nitro `vercel` preset and writes `.vercel/output`, which Vercel
+deploys automatically. Set the same environment variables from `.env` in the Vercel
+project settings. For a plain Node server instead, build with `NITRO_PRESET=node-server`.

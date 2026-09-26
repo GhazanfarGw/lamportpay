@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, CircleDashed, Plug, RefreshCw } from "lucide-react";
 
+type Mode = "sandbox" | "live" | "mock";
+
 type Provider = {
   name: string;
   role: string;
   configured: boolean;
-  mode: "sandbox" | "mock";
+  mode: Mode;
   note: string;
 };
 
-type Endpoint = { path: string; provider: string; mode: "sandbox" | "mock" };
+type Endpoint = { path: string; provider: string; mode: Mode };
 
 type Status = {
   providers: Provider[];
@@ -22,16 +24,18 @@ type Status = {
   };
 };
 
-function ModePill({ mode }: { mode: "sandbox" | "mock" }) {
+function ModePill({ mode }: { mode: Mode }) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-        mode === "sandbox"
-          ? "bg-primary/10 text-primary border border-primary/20"
-          : "bg-muted text-muted-foreground border border-border/60"
+        mode === "live"
+          ? "bg-destructive/10 text-destructive border border-destructive/20"
+          : mode === "sandbox"
+            ? "bg-primary/10 text-primary border border-primary/20"
+            : "bg-muted text-muted-foreground border border-border/60"
       }`}
     >
-      {mode === "sandbox" ? "sandbox" : "mock"}
+      {mode}
     </span>
   );
 }

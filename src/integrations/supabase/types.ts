@@ -226,6 +226,236 @@ export type Database = {
           },
         ]
       }
+      payment_events: {
+        Row: {
+          created_at: string
+          detail: Json | null
+          from_status: string | null
+          id: number
+          kind: string
+          payment_id: string
+          source: string
+          to_status: string | null
+        }
+        Insert: {
+          created_at?: string
+          detail?: Json | null
+          from_status?: string | null
+          id?: never
+          kind: string
+          payment_id: string
+          source: string
+          to_status?: string | null
+        }
+        Update: {
+          created_at?: string
+          detail?: Json | null
+          from_status?: string | null
+          id?: never
+          kind?: string
+          payment_id?: string
+          source?: string
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_events_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payments: {
+        Row: {
+          actual_payout_currency: string | null
+          actual_payout_minor: number | null
+          beneficiary_summary: Json | null
+          created_at: string
+          deposit_address: string | null
+          deposit_amount_minor: number | null
+          destination_amount_minor: number | null
+          destination_country: string
+          destination_currency: string
+          exchange_rate: number | null
+          failure_reason: string | null
+          fees: Json | null
+          funding_payer: string | null
+          funding_signature: string | null
+          funding_verified_at: string | null
+          id: string
+          payer_wallet: string | null
+          pre_hold_status: string | null
+          purpose_code: string | null
+          quote_expires_at: string | null
+          quote_id: string | null
+          quote_snapshot: Json | null
+          reconciled_at: string | null
+          source_amount_minor: number
+          source_currency: string
+          source_network: string
+          stables_customer_id: string | null
+          status: string
+          transfer_id: string | null
+          transfer_snapshot: Json | null
+          travel_rule_expires_at: string | null
+          travel_rule_reference: string | null
+          travel_rule_requested_at: string | null
+          travel_rule_resolved_at: string | null
+          travel_rule_verification_url: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          actual_payout_currency?: string | null
+          actual_payout_minor?: number | null
+          beneficiary_summary?: Json | null
+          created_at?: string
+          deposit_address?: string | null
+          deposit_amount_minor?: number | null
+          destination_amount_minor?: number | null
+          destination_country: string
+          destination_currency: string
+          exchange_rate?: number | null
+          failure_reason?: string | null
+          fees?: Json | null
+          funding_payer?: string | null
+          funding_signature?: string | null
+          funding_verified_at?: string | null
+          id?: string
+          payer_wallet?: string | null
+          pre_hold_status?: string | null
+          purpose_code?: string | null
+          quote_expires_at?: string | null
+          quote_id?: string | null
+          quote_snapshot?: Json | null
+          reconciled_at?: string | null
+          source_amount_minor: number
+          source_currency?: string
+          source_network?: string
+          stables_customer_id?: string | null
+          status?: string
+          transfer_id?: string | null
+          transfer_snapshot?: Json | null
+          travel_rule_expires_at?: string | null
+          travel_rule_reference?: string | null
+          travel_rule_requested_at?: string | null
+          travel_rule_resolved_at?: string | null
+          travel_rule_verification_url?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          actual_payout_currency?: string | null
+          actual_payout_minor?: number | null
+          beneficiary_summary?: Json | null
+          created_at?: string
+          deposit_address?: string | null
+          deposit_amount_minor?: number | null
+          destination_amount_minor?: number | null
+          destination_country?: string
+          destination_currency?: string
+          exchange_rate?: number | null
+          failure_reason?: string | null
+          fees?: Json | null
+          funding_payer?: string | null
+          funding_signature?: string | null
+          funding_verified_at?: string | null
+          id?: string
+          payer_wallet?: string | null
+          pre_hold_status?: string | null
+          purpose_code?: string | null
+          quote_expires_at?: string | null
+          quote_id?: string | null
+          quote_snapshot?: Json | null
+          reconciled_at?: string | null
+          source_amount_minor?: number
+          source_currency?: string
+          source_network?: string
+          stables_customer_id?: string | null
+          status?: string
+          transfer_id?: string | null
+          transfer_snapshot?: Json | null
+          travel_rule_expires_at?: string | null
+          travel_rule_reference?: string | null
+          travel_rule_requested_at?: string | null
+          travel_rule_resolved_at?: string | null
+          travel_rule_verification_url?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      stables_customers: {
+        Row: {
+          base_payout_status: string | null
+          created_at: string
+          kyc_link: string | null
+          kyc_link_expires_at: string | null
+          stables_customer_id: string
+          updated_at: string
+          user_id: string
+          verification_status: string | null
+          verification_sub_status: string[] | null
+        }
+        Insert: {
+          base_payout_status?: string | null
+          created_at?: string
+          kyc_link?: string | null
+          kyc_link_expires_at?: string | null
+          stables_customer_id: string
+          updated_at?: string
+          user_id: string
+          verification_status?: string | null
+          verification_sub_status?: string[] | null
+        }
+        Update: {
+          base_payout_status?: string | null
+          created_at?: string
+          kyc_link?: string | null
+          kyc_link_expires_at?: string | null
+          stables_customer_id?: string
+          updated_at?: string
+          user_id?: string
+          verification_status?: string | null
+          verification_sub_status?: string[] | null
+        }
+        Relationships: []
+      }
+      stables_webhook_events: {
+        Row: {
+          event_id: string
+          event_object_id: string | null
+          event_object_status: string | null
+          event_type: string
+          payload: Json
+          process_error: string | null
+          processed_at: string | null
+          received_at: string
+        }
+        Insert: {
+          event_id: string
+          event_object_id?: string | null
+          event_object_status?: string | null
+          event_type: string
+          payload: Json
+          process_error?: string | null
+          processed_at?: string | null
+          received_at?: string
+        }
+        Update: {
+          event_id?: string
+          event_object_id?: string | null
+          event_object_status?: string | null
+          event_type?: string
+          payload?: Json
+          process_error?: string | null
+          processed_at?: string | null
+          received_at?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string

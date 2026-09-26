@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { AdminSignOutButton } from "@/components/site/AdminSignOutButton";
 import { SiteLayout } from "@/components/site/Layout";
+import { StablesPaymentsAdmin } from "@/components/site/StablesPaymentsAdmin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -360,7 +361,9 @@ function AdminPage() {
 
         {data?.isAdmin && (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <StablesPaymentsAdmin />
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
               <h2 className="text-lg font-semibold">Mock identity checks</h2>
               <div className="flex items-center gap-2">
               <Button asChild variant="outline" size="sm">

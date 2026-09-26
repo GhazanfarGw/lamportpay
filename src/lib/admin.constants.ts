@@ -116,3 +116,38 @@ export const ENTITY_LABELS: Record<string, string> = {
   user_role: "Role",
   admin_invite: "Invite",
 };
+
+// ------------------------------------------------- live Stables payments
+
+export const STABLES_PAYMENT_COLUMNS =
+  "id, user_id, status, created_at, source_amount_minor, destination_currency, destination_country, destination_amount_minor, transfer_id, funding_signature, payer_wallet, failure_reason, travel_rule_reference, travel_rule_verification_url, travel_rule_expires_at, travel_rule_requested_at, travel_rule_resolved_at";
+
+export type AdminStablesPaymentRow = {
+  id: string;
+  user_id: string;
+  status: string;
+  created_at: string;
+  source_amount_minor: number;
+  destination_currency: string;
+  destination_country: string;
+  destination_amount_minor: number | null;
+  transfer_id: string | null;
+  funding_signature: string | null;
+  payer_wallet: string | null;
+  failure_reason: string | null;
+  travel_rule_reference: string | null;
+  travel_rule_verification_url: string | null;
+  travel_rule_expires_at: string | null;
+  travel_rule_requested_at: string | null;
+  travel_rule_resolved_at: string | null;
+};
+
+/** A stored Travel Rule request whose reference matched no payment. */
+export type AdminUnmatchedTravelRule = {
+  eventId: string;
+  reference: string | null;
+  verificationUrl: string | null;
+  expiresAt: string | null;
+  receivedAt: string;
+  note: string | null;
+};

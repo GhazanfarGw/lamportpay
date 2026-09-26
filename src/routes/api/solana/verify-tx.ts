@@ -8,6 +8,7 @@ import {
   isSolanaCluster,
 } from "@/lib/solana-rpc";
 import { rpc } from "@/lib/solana-rpc.server";
+import { tokenDelta, type TxResult } from "@/lib/solana-usdc.server";
 
 const FORBIDDEN_FIELDS = [
   "privateKey",
@@ -20,40 +21,6 @@ const FORBIDDEN_FIELDS = [
   "mnemonic",
   "keypair",
 ];
-
-type TokenBalance = {
-  accountIndex: number;
-  mint: string;
-  owner?: string;
-  uiTokenAmount: { amount: string; decimals: number; uiAmount: number | null };
-};
-
-type TxResult = {
-  slot: number;
-  blockTime: number | null;
-  meta: {
-    err: unknown;
-    fee: number;
-    preBalances: number[];
-    postBalances: number[];
-    preTokenBalances?: TokenBalance[];
-    postTokenBalances?: TokenBalance[];
-  } | null;
-  transaction: { message: { accountKeys: unknown[] } };
-} | null;
-
-function tokenDelta(
-  pre: TokenBalance[] | undefined,
-  post: TokenBalance[] | undefined,
-  mint: string,
-  owner?: string,
-) {
-  const sum = (list: TokenBalance[] | undefined) =>
-    (list ?? [])
-      .filter((b) => b.mint === mint && (!owner || b.owner === owner))
-      .reduce((acc, b) => acc + Number(b.uiTokenAmount.amount || "0"), 0);
-  return sum(post) - sum(pre);
-}
 
 /**
  * POST /api/solana/verify-tx
@@ -129,7 +96,7 @@ export const Route = createFileRoute("/api/solana/verify-tx")({
 
         const meta = tx.ok && tx.result ? tx.result.meta : null;
         const usdcDelta = meta
-          ? tokenDelta(meta.preTokenBalances, meta.postTokenBalances, USDC_MINT, owner)
+          ? Number(tokenDelta(meta.preTokenBalances, meta.postTokenBalances, USDC_MINT, owner))
           : 0;
         const solDelta =
           meta && meta.preBalances.length > 0 ? meta.postBalances[0]! - meta.preBalances[0]! : 0;

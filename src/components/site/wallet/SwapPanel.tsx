@@ -83,7 +83,18 @@ function fromBase64(value: string): Uint8Array {
   return out;
 }
 
-export function SwapPanel() {
+export type SwapExecution = {
+  signature: string;
+  owner: string;
+  totalOutputAmount: string | null;
+};
+
+type SwapPanelProps = {
+  /** Called once a swap has executed and returned an on-chain signature. */
+  onExecuted?: (execution: SwapExecution) => void;
+};
+
+export function SwapPanel({ onExecuted }: SwapPanelProps = {}) {
   const { publicKey, connected, signTransaction } = useWallet();
   const address = publicKey?.toBase58() ?? "";
 
@@ -216,12 +227,19 @@ export function SwapPanel() {
       const data = (await res.json()) as ExecuteResult & { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? "Swap execution failed.");
       setResult(data);
+      if (data.signature) {
+        onExecuted?.({
+          signature: data.signature,
+          owner: address,
+          totalOutputAmount: data.totalOutputAmount,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Swap execution failed.");
     } finally {
       setBusy(null);
     }
-  }, [signed, order]);
+  }, [signed, order, onExecuted, address]);
 
   return (
     <div className="space-y-6">
@@ -407,8 +425,8 @@ export function SwapPanel() {
                 Fiat payout disabled
               </div>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                USDC swap completed. Fiat payout is disabled for now. Partner KYC and
-                local-currency payout will be added only after licensed partner approval.
+                USDC swap completed. Fiat payout is disabled for now. Partner KYC and local-currency
+                payout will be added only after licensed partner approval.
               </p>
             </div>
           )}

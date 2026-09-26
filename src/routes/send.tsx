@@ -12,7 +12,7 @@ import {
   mockPaymentId,
   mockSolanaHash,
 } from "@/components/site/demo-data";
-import { useMemo, useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,12 +20,12 @@ import {
   Copy,
   ShieldCheck,
   AlertCircle,
-  ToggleLeft,
-  ToggleRight,
+  ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { LammySays, LammyCheck, LAMMY_INTRO, LAMMY_SAFETY } from "@/components/site/Lammy";
-import { WalletPanelIsland } from "@/components/site/wallet/WalletIsland";
-import { getPayoutPaymentRail, payoutCurrency } from "@/lib/payout.mapping";
+import { SwapPanelIsland, WalletPanelIsland } from "@/components/site/wallet/WalletIsland";
+import type { SwapExecution } from "@/components/site/wallet/SwapPanel";
 import { SwapRoutePreviewCard } from "@/components/site/SwapRoutePreview";
 import { IntegrationStatusPanel } from "@/components/site/IntegrationStatusPanel";
 import { pageSeo } from "@/lib/seo";
@@ -43,10 +43,67 @@ export const Route = createFileRoute("/send")({
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
-type PayoutStatus = {
-  configured: boolean | null;
-  message: string;
+/** A real SOL → USDC swap used as this payment's settlement transaction. */
+type Settlement = {
+  signature: string;
+  status: "verifying" | "verified" | "failed";
+  usdcReceived: number | null;
+  explorerUrl: string | null;
+  error: string | null;
 };
+
+type VerifyResponse = {
+  found?: boolean;
+  success?: boolean;
+  usdcUiDelta?: number;
+  explorerUrl?: string;
+  error?: string | null;
+};
+
+/**
+ * Confirms the swap on mainnet via /api/solana/verify-tx. A just-executed
+ * transaction can take a few seconds to become queryable, so a 404 is retried.
+ */
+async function verifySwap(
+  execution: SwapExecution,
+): Promise<Pick<Settlement, "status" | "usdcReceived" | "explorerUrl" | "error">> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const res = await fetch("/api/solana/verify-tx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signature: execution.signature,
+          cluster: "mainnet-beta",
+          owner: execution.owner,
+        }),
+      });
+      const data = (await res.json()) as VerifyResponse;
+      if (res.status === 404) continue;
+      const verified = res.ok && data.found === true && data.success === true;
+      return {
+        status: verified ? "verified" : "failed",
+        usdcReceived: verified ? (data.usdcUiDelta ?? null) : null,
+        explorerUrl: data.explorerUrl ?? null,
+        error: verified ? null : (data.error ?? "Swap could not be verified on-chain."),
+      };
+    } catch {
+      return {
+        status: "failed",
+        usdcReceived: null,
+        explorerUrl: null,
+        error: "Could not reach the verification endpoint.",
+      };
+    }
+  }
+  return {
+    status: "failed",
+    usdcReceived: null,
+    explorerUrl: null,
+    error: "Swap not found on mainnet yet. Check it on the explorer.",
+  };
+}
 
 export default function SendPage() {
   const [step, setStep] = useState<Step>(1);
@@ -62,14 +119,7 @@ export default function SendPage() {
   const [payoutRef, setPayoutRef] = useState("");
   const [txHash, setTxHash] = useState("");
   const [trackIdx, setTrackIdx] = useState(0);
-
-  const [payoutMode, setPayoutMode] = useState(false);
-  const [payoutStatus, setPayoutStatus] = useState<PayoutStatus>({ configured: null, message: "" });
-  const [payoutLoading, setPayoutLoading] = useState(false);
-  const [payoutError, setPayoutError] = useState<string | null>(null);
-  const [payoutCustomerId, setPayoutCustomerId] = useState("");
-  const [payoutExternalAccountId, setPayoutExternalAccountId] = useState("");
-  const [payoutTransferId, setPayoutTransferId] = useState("");
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
 
   const corridor = CORRIDORS[corridorIdx];
   const quote = useMemo(
@@ -103,127 +153,19 @@ export default function SendPage() {
     return () => clearInterval(id);
   }, [step]);
 
-  const getPayoutQuote = async () => {
-    setPayoutLoading(true);
-    setPayoutError(null);
-    try {
-      const res = await fetch("/api/payout/quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": mockPaymentId() },
-        body: JSON.stringify({
-          amount: (parseFloat(amount) || 0).toString(),
-          sourceCurrency: "usdc",
-          destinationCurrency: payoutCurrency(corridor.currency),
-          paymentRail: getPayoutPaymentRail(corridor.currency, method),
-          onBehalfOf: "demo_customer",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setPayoutError(data.error ?? "Payout quote failed.");
-      } else {
-        setPayoutStatus({
-          configured: !data.demoMode,
-          message: data.demoMode
-            ? "Payout partner API not configured — using demo quote."
-            : "Payout partner API connected — real quote received.",
-        });
-        if (data.transfer?.id) {
-          setPayoutRef(data.transfer.id as string);
-        }
-      }
-    } catch (e) {
-      setPayoutError(e instanceof Error ? e.message : "Failed to reach Payout partner API.");
-    } finally {
-      setPayoutLoading(false);
-    }
-  };
-
-  const createPayoutCustomer = async () => {
-    setPayoutLoading(true);
-    setPayoutError(null);
-    try {
-      const res = await fetch("/api/payout/customer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": mockPaymentId() },
-        body: JSON.stringify({
-          type: "individual",
-          first_name: recipientName.split(" ")[0] || "Demo",
-          last_name: recipientName.split(" ")[1] || "User",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setPayoutError(data.error ?? "Payout partner customer creation failed.");
-      } else if (data.customer?.id) {
-        setPayoutCustomerId(data.customer.id as string);
-      }
-      setPayoutStatus({
-        configured: !data.demoMode,
-        message: data.demoMode
-          ? "Payout partner API not configured — mock KYC used."
-          : "Payout partner customer created.",
-      });
-    } catch (e) {
-      setPayoutError(e instanceof Error ? e.message : "Failed to reach Payout partner API.");
-    } finally {
-      setPayoutLoading(false);
-    }
-  };
-
-  const createPayoutExternalAccountAndTransfer = async () => {
-    setPayoutLoading(true);
-    setPayoutError(null);
-    try {
-      if (payoutCustomerId) {
-        const accountRes = await fetch("/api/payout/external-account", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Idempotency-Key": mockPaymentId() },
-          body: JSON.stringify({
-            customerId: payoutCustomerId,
-            currency: payoutCurrency(corridor.currency),
-            account_number: "0000000000",
-            account_holder_name: recipientName,
-            account_holder_type: "individual",
-          }),
-        });
-        const accountData = await accountRes.json();
-        if (accountRes.ok && accountData.externalAccount?.id) {
-          setPayoutExternalAccountId(accountData.externalAccount.id as string);
-        }
-      }
-
-      const transferRes = await fetch("/api/payout/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": mockPaymentId() },
-        body: JSON.stringify({
-          amount: quote.usdcSettlement.toString(),
-          onBehalfOf: payoutCustomerId || "demo_customer",
-          sourceCurrency: "usdc",
-          destinationCurrency: payoutCurrency(corridor.currency),
-          paymentRail: getPayoutPaymentRail(corridor.currency, method),
-          externalAccountId: payoutExternalAccountId || undefined,
-          developerFee: quote.platformFee.toString(),
-        }),
-      });
-      const transferData = await transferRes.json();
-      if (!transferRes.ok) {
-        setPayoutError(transferData.error ?? "Payout transfer failed.");
-      } else if (transferData.transfer?.id) {
-        setPayoutTransferId(transferData.transfer.id as string);
-      }
-      setPayoutStatus({
-        configured: !transferData.demoMode,
-        message: transferData.demoMode
-          ? "Payout partner API not configured — mock transfer used."
-          : "Payout transfer created.",
-      });
-    } catch (e) {
-      setPayoutError(e instanceof Error ? e.message : "Failed to reach Payout partner API.");
-    } finally {
-      setPayoutLoading(false);
-    }
-  };
+  const onSwapExecuted = useCallback(async (execution: SwapExecution) => {
+    const pending: Settlement = {
+      signature: execution.signature,
+      status: "verifying",
+      usdcReceived: null,
+      explorerUrl: null,
+      error: null,
+    };
+    setSettlement(pending);
+    const verified = await verifySwap(execution);
+    // Ignore late results if another swap replaced this one meanwhile.
+    setSettlement((s) => (s?.signature === execution.signature ? { ...pending, ...verified } : s));
+  }, []);
 
   return (
     <SiteLayout>
@@ -236,61 +178,28 @@ export default function SendPage() {
             Send a demo transfer
           </h1>
           <p className="text-muted-foreground mt-2">
-            Six steps. All mock data unless Payout partner API is connected. No real crypto, KYC, or fiat
-            moves without partner approval.
+            Six steps, all mock data. No real crypto, KYC, or fiat moves in this demo.
           </p>
         </div>
 
         <div className="rounded-2xl border border-border/60 bg-card p-5 mb-6 flex flex-col md:flex-row md:items-center gap-4 justify-between">
           <div className="flex items-start gap-3">
-            <div className="mt-0.5">
-              {payoutMode ? (
-                <ToggleRight className="w-5 h-5 text-primary" />
-              ) : (
-                <ToggleLeft className="w-5 h-5 text-muted-foreground" />
-              )}
-            </div>
+            <AlertCircle className="w-5 h-5 text-primary mt-0.5 shrink-0" />
             <div>
-              <div className="font-semibold text-sm">Payout partner API mode</div>
+              <div className="font-semibold text-sm">This walkthrough is a simulation</div>
               <p className="text-xs text-muted-foreground mt-1">
-                When enabled, the demo tries to call real payout partner sandbox endpoints. If
-                PAYOUT_API_KEY is missing, it falls back to mock data.
+                Nothing here contacts a payout partner. Real payments run through Stables on the
+                signed-in payment page.
               </p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setPayoutMode((v) => !v);
-              setPayoutStatus({ configured: null, message: "" });
-              setPayoutError(null);
-            }}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${payoutMode ? "bg-primary text-white" : "bg-card border border-border hover:bg-secondary"}`}
+          <Link
+            to="/pay"
+            className="inline-flex items-center gap-2 rounded-full bg-card border border-border px-4 py-2 text-sm font-semibold hover:bg-secondary transition"
           >
-            {payoutMode ? "Payout partner mode on" : "Payout partner mode off"}
-          </button>
+            Real payment <ArrowRight className="w-4 h-4" />
+          </Link>
         </div>
-
-        {payoutMode && (
-          <div className="rounded-2xl border border-border/60 bg-card p-5 mb-6 space-y-2">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <AlertCircle className="w-4 h-4 text-primary" />
-              Payout partner integration status
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {payoutStatus.configured === null
-                ? "Not tested yet. Continue to the quote step to probe the Payout partner API."
-                : payoutStatus.message}
-            </div>
-            {payoutLoading && (
-              <div className="text-xs text-muted-foreground">Calling Payout partner API…</div>
-            )}
-            {payoutError && (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-                {payoutError}
-              </div>
-            )}
-          </div>
-        )}
 
         <Stepper
           current={step}
@@ -408,15 +317,6 @@ export default function SendPage() {
           {step === 2 && (
             <div className="space-y-6">
               <SectionTitle title="2. Payout quote" />
-              {payoutMode && (
-                <button
-                  onClick={getPayoutQuote}
-                  disabled={payoutLoading}
-                  className="inline-flex items-center gap-2 rounded-full bg-card border border-border px-4 py-2 text-sm font-semibold hover:bg-secondary transition disabled:opacity-50"
-                >
-                  {payoutLoading ? "Calling partner API…" : "Fetch real Payout quote"}
-                </button>
-              )}
               <div className="grid md:grid-cols-2 gap-3">
                 <KV k="Provider" v="Regulated payout partner (TBD)" />
                 <KV k="Provider type" v="Stablecoin orchestration / settlement partner" />
@@ -438,18 +338,9 @@ export default function SendPage() {
                 <KV k="KYC method" v="Partner-hosted KYC" />
                 <KV k="Payout method" v={method} />
                 <KV k="Corridor support" v="Demo supported" />
-                {payoutMode && payoutTransferId && (
-                  <KV
-                    k="Payout transfer id"
-                    v={<span className="font-mono text-xs">{payoutTransferId}</span>}
-                  />
-                )}
               </div>
               <div className="text-xs text-muted-foreground">
-                Status note:{" "}
-                {payoutMode
-                  ? "Attempting real Payout quote; falls back to mock if API is not configured."
-                  : "Mock quote for demo only."}
+                Status note: Mock quote for demo only.
               </div>
               <NavButtons
                 onBack={() => setStep(1)}
@@ -465,37 +356,17 @@ export default function SendPage() {
               <div className="rounded-2xl bg-secondary/60 p-5 flex items-start gap-3">
                 <ShieldCheck className="w-5 h-5 text-primary shrink-0 mt-0.5" />
                 <p className="text-sm leading-relaxed">
-                  Identity verification is handled by <strong>a regulated payout partner</strong> or the selected
-                  licensed payout partner, not by LamportPay.
+                  Identity verification is handled by <strong>a regulated payout partner</strong> or
+                  the selected licensed payout partner, not by LamportPay.
                 </p>
               </div>
-              {payoutMode && !kycApproved && (
-                <button
-                  onClick={createPayoutCustomer}
-                  disabled={payoutLoading}
-                  className="inline-flex items-center gap-2 rounded-full bg-card border border-border px-4 py-2 text-sm font-semibold hover:bg-secondary transition disabled:opacity-50"
-                >
-                  {payoutLoading ? "Creating…" : "Create real Payout partner customer"}
-                </button>
-              )}
               <div className="grid md:grid-cols-2 gap-3">
                 <KV k="Selected partner" v="Regulated payout partner (TBD)" />
                 <KV k="KYC status" v={kycApproved ? "Approved" : "Not started"} />
-                {payoutMode && payoutCustomerId && (
-                  <KV
-                    k="Payout partner customer id"
-                    v={<span className="font-mono text-xs">{payoutCustomerId}</span>}
-                  />
-                )}
               </div>
               {kycApproved && <LammyCheck label="Mock KYC approved by settlement partner" />}
               {!kycApproved ? (
-                <PrimaryButton
-                  onClick={() => {
-                    setKycApproved(true);
-                    if (payoutMode) void createPayoutCustomer();
-                  }}
-                >
+                <PrimaryButton onClick={() => setKycApproved(true)}>
                   Complete Mock partner KYC
                 </PrimaryButton>
               ) : (
@@ -511,15 +382,6 @@ export default function SendPage() {
           {step === 4 && (
             <div className="space-y-6">
               <SectionTitle title="4. Payment confirmation" />
-              {payoutMode && (
-                <button
-                  onClick={createPayoutExternalAccountAndTransfer}
-                  disabled={payoutLoading}
-                  className="inline-flex items-center gap-2 rounded-full bg-card border border-border px-4 py-2 text-sm font-semibold hover:bg-secondary transition disabled:opacity-50"
-                >
-                  {payoutLoading ? "Creating…" : "Create Payout partner account + transfer"}
-                </button>
-              )}
               <div className="grid md:grid-cols-2 gap-3">
                 <KV k="Input token" v={token} />
                 <KV k="Input amount" v={amount} />
@@ -536,25 +398,26 @@ export default function SendPage() {
                 />
                 <KV k="Estimated delivery" v="Under 5 minutes" />
                 <KV k="Payout method" v={method} />
-                {payoutMode && payoutExternalAccountId && (
-                  <KV
-                    k="Payout partner account"
-                    v={<span className="font-mono text-xs">{payoutExternalAccountId}</span>}
-                  />
-                )}
-                {payoutMode && payoutTransferId && (
-                  <KV
-                    k="Payout transfer id"
-                    v={<span className="font-mono text-xs">{payoutTransferId}</span>}
-                  />
-                )}
+              </div>
+              <div className="rounded-2xl border border-border/60 p-5 space-y-4">
+                <div>
+                  <div className="text-sm font-semibold">
+                    Optional: settle with a real SOL → USDC swap
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Swaps 0.001–0.01 SOL on Solana mainnet through Jupiter. The USDC returns to your
+                    own wallet. If you swap, the receipt uses that on-chain transaction instead of a
+                    mock hash.
+                  </p>
+                </div>
+                <SwapPanelIsland onExecuted={onSwapExecuted} />
+                {settlement && <SettlementStatus settlement={settlement} />}
               </div>
               <PrimaryButton
                 onClick={() => {
-                  setTxHash(mockSolanaHash());
-                  setPayoutRef(payoutTransferId || mockPayoutRef());
+                  setTxHash(settlement?.signature ?? mockSolanaHash());
+                  setPayoutRef(mockPayoutRef());
                   setStep(5);
-                  if (payoutMode) void createPayoutExternalAccountAndTransfer();
                 }}
               >
                 Simulate Payment
@@ -604,19 +467,14 @@ export default function SendPage() {
               method={method}
               payoutRef={payoutRef}
               txHash={txHash}
-              payoutMode={payoutMode}
-              payoutTransferId={payoutTransferId}
+              settlement={settlement}
               onReset={() => {
+                setSettlement(null);
                 setStep(1);
                 setKycApproved(false);
                 setPaymentId("");
                 setPayoutRef("");
                 setTxHash("");
-                setPayoutCustomerId("");
-                setPayoutExternalAccountId("");
-                setPayoutTransferId("");
-                setPayoutError(null);
-                setPayoutStatus({ configured: null, message: "" });
               }}
             />
           )}
@@ -642,8 +500,7 @@ type ReceiptProps = {
   method: string;
   payoutRef: string;
   txHash: string;
-  payoutMode: boolean;
-  payoutTransferId: string;
+  settlement: Settlement | null;
   onReset: () => void;
 };
 
@@ -658,10 +515,18 @@ function Receipt(props: ReceiptProps) {
     method,
     payoutRef,
     txHash,
-    payoutMode,
-    payoutTransferId,
+    settlement,
     onReset,
   } = props;
+  // Only a swap whose signature became this receipt's tx counts as real settlement.
+  const realTx = settlement?.signature === txHash ? settlement : null;
+  const txLabel = !realTx
+    ? "Mock Solana tx"
+    : realTx.status === "verified"
+      ? "Solana tx (verified on mainnet)"
+      : realTx.status === "verifying"
+        ? "Solana tx (verifying…)"
+        : "Solana tx (unverified)";
   const [copied, setCopied] = useState(false);
   const receiptText = [
     `Payment ID: ${paymentId}`,
@@ -676,12 +541,9 @@ function Receipt(props: ReceiptProps) {
     `LamportPay fee: $${fmt(quote.platformFee)}`,
     `FX rate: 1 USD = ${fmt(quote.fxRate, quote.fxRate > 100 ? 0 : 2)} ${corridor.currency}`,
     `Payout method: ${method}`,
-    `Solana tx (mock): ${txHash}`,
+    `${txLabel}: ${txHash}`,
+    realTx?.usdcReceived != null ? `On-chain USDC received: ${fmt(realTx.usdcReceived, 6)}` : "",
     `Status: Paid`,
-    payoutMode ? `Payout transfer id: ${payoutTransferId || "n/a"}` : "",
-    payoutMode
-      ? "Note: Payout partner mode was on; real transfer may not have been created if API key was missing."
-      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -721,16 +583,24 @@ function Receipt(props: ReceiptProps) {
           />
           <KV k="Payout method" v={method} />
           <KV
-            k="Mock Solana tx"
-            v={<span className="font-mono text-[10px] break-all">{txHash}</span>}
+            k={txLabel}
+            v={
+              realTx?.explorerUrl ? (
+                <a
+                  href={realTx.explorerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-[10px] break-all text-primary hover:underline"
+                >
+                  {txHash}
+                </a>
+              ) : (
+                <span className="font-mono text-[10px] break-all">{txHash}</span>
+              )
+            }
           />
-          {payoutMode && (
-            <KV
-              k="Payout transfer id"
-              v={
-                <span className="font-mono text-[10px] break-all">{payoutTransferId || "n/a"}</span>
-              }
-            />
+          {realTx?.usdcReceived != null && (
+            <KV k="On-chain USDC received" v={`${fmt(realTx.usdcReceived, 6)} USDC`} />
           )}
         </div>
       </div>
@@ -760,6 +630,41 @@ function Receipt(props: ReceiptProps) {
           )}
         </button>
       </div>
+    </div>
+  );
+}
+
+function SettlementStatus({ settlement }: { settlement: Settlement }) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm space-y-1">
+      <div className="flex items-center gap-2 font-semibold">
+        {settlement.status === "verifying" && <Loader2 className="w-4 h-4 animate-spin" />}
+        {settlement.status === "verified" && (
+          <Check className="w-4 h-4 text-[color:var(--success)]" />
+        )}
+        {settlement.status === "failed" && <AlertCircle className="w-4 h-4 text-destructive" />}
+        {settlement.status === "verifying"
+          ? "Verifying swap on mainnet…"
+          : settlement.status === "verified"
+            ? "Swap verified — this transaction will be used as settlement"
+            : "Swap could not be verified"}
+      </div>
+      {settlement.usdcReceived != null && (
+        <div className="text-xs text-muted-foreground">
+          USDC received: {fmt(settlement.usdcReceived, 6)}
+        </div>
+      )}
+      {settlement.error && <div className="text-xs text-destructive">{settlement.error}</div>}
+      {settlement.explorerUrl && (
+        <a
+          href={settlement.explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+        >
+          View on explorer <ExternalLink className="w-3 h-3" />
+        </a>
+      )}
     </div>
   );
 }

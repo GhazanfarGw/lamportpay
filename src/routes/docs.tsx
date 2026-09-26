@@ -24,23 +24,18 @@ const stack = [
 ];
 
 const apis = [
-  "POST /api/payments",
-  "POST /api/payout-quote",
-  "POST /api/payout-kyc/start",
-  "POST /api/payout-kyc/complete",
-  "POST /api/payments/confirm",
-  "POST /api/jupiter/quote",
+  "GET  /api/kyc                                  partner KYC status",
+  "POST /api/kyc                                  hosted partner KYC link",
+  "POST /api/payments                             create payment",
+  "GET  /api/payments/[paymentId]                 status + timeline",
+  "POST /api/payments/[paymentId]/quote           partner quote",
+  "POST /api/payments/[paymentId]/transfer        partner transfer + deposit address",
+  "POST /api/jupiter/quote                        SOL → USDC route",
   "POST /api/jupiter/order",
   "POST /api/jupiter/execute",
-  "POST /api/solana/verify-transaction",
-  "POST /api/payout-transfer",
-  "GET /api/payments/[paymentId]",
-  "GET /api/receipt/[paymentId]",
-  "POST /api/payout/quote",
-  "POST /api/payout/customer",
-  "POST /api/payout/external-account",
-  "POST /api/payout/transfer",
-  "POST /api/public/payout-webhook",
+  "POST /api/payments/[paymentId]/funding-transaction   unsigned USDC transfer",
+  "POST /api/payments/[paymentId]/funding         verify Solana signature",
+  "POST /api/public/stables-webhook               partner status updates",
 ];
 
 function Docs() {
@@ -80,8 +75,8 @@ function Docs() {
             </pre>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">
-            All endpoints are conceptual until backend MVP. The demo UI is designed so real
-            implementations can slot in without changing user-visible flows.
+            Payment endpoints require a signed-in user. Funds never pass through LamportPay: the
+            user's wallet sends USDC straight to the partner's single-use deposit address.
           </p>
         </div>
       </section>

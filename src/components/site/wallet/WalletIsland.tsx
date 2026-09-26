@@ -1,6 +1,9 @@
 import { Component, lazy, Suspense, useState, type ReactElement, type ReactNode } from "react";
 import { ClientOnly } from "@tanstack/react-router";
 
+import type { FundingPanelProps } from "./FundingPanel";
+import type { SwapExecution } from "./SwapPanel";
+
 type WalletModule = {
   SolanaWalletProvider: ({ children }: { children: ReactNode }) => ReactElement;
   WalletConnectButton: () => ReactElement;
@@ -101,6 +104,13 @@ const Swap = lazy(async () => {
   const m = await import("./SwapPanel");
   return { default: m.SwapPanel };
 });
+const Funding = lazy(async () => {
+  if (typeof window === "undefined") return { default: WalletFallbackCard };
+  const polyfill = await import("@/lib/buffer-polyfill");
+  polyfill.installBufferPolyfill();
+  const m = await import("./FundingPanel");
+  return { default: m.FundingPanel };
+});
 
 function Island({ children, fallback }: { children: ReactNode; fallback: ReactNode }) {
   return (
@@ -149,10 +159,23 @@ export function WalletPanelIsland() {
 }
 
 /** SOL → USDC Jupiter swap demo panel. */
-export function SwapPanelIsland() {
+export function SwapPanelIsland({
+  onExecuted,
+}: {
+  onExecuted?: (execution: SwapExecution) => void;
+}) {
   return (
     <Island fallback={<WalletFallbackCard />}>
-      <Swap />
+      <Swap onExecuted={onExecuted} />
+    </Island>
+  );
+}
+
+/** Sends a payment's USDC deposit from the connected wallet. */
+export function FundingPanelIsland(props: FundingPanelProps) {
+  return (
+    <Island fallback={<WalletFallbackCard />}>
+      <Funding {...props} />
     </Island>
   );
 }

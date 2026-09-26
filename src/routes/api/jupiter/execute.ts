@@ -6,12 +6,14 @@ const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 const ExecuteInput = z
   .object({
     signedTransaction: z
-      .string()
+      .string({ error: "signedTransaction is required." })
       .min(1, "signedTransaction is required.")
       .refine((v) => v.length % 4 === 0 && BASE64_RE.test(v), {
         message: "signedTransaction must be a base64 string.",
       }),
-    requestId: z.string().min(1, "requestId is required."),
+    requestId: z
+      .string({ error: "requestId is required." })
+      .min(1, "requestId is required."),
     lastValidBlockHeight: z.union([z.string(), z.number()]).optional(),
   })
   // Never accept key material — reject any extra fields outright.

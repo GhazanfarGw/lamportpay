@@ -10,17 +10,90 @@ import {
   ASSIGNABLE_ROLES,
   AUDIT_COLUMNS,
   KYC_COLUMNS,
+  STABLES_PAYMENT_COLUMNS,
   TRANSFER_COLUMNS,
   TRANSFER_DETAIL_COLUMNS,
   type AdminAuditRow,
   type AdminInviteRow,
   type AdminKycRow,
   type AdminRoleRow,
+  type AdminStablesPaymentRow,
   type AdminTransferDetail,
   type AdminTransferRow,
+  type AdminUnmatchedTravelRule,
   type PaymentStatus,
   type QuoteStatus,
 } from "./admin.constants";
+
+/**
+ * Live Stables payments for operations: the latest payments, every payment
+ * with an open Travel Rule wallet-verification request, and Travel Rule
+ * requests that matched no payment. Read through the admin's own session;
+ * RLS lets admins read payments and stored webhook deliveries.
+ */
+export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+
+    const { data: isAdmin, error: roleError } = await supabase.rpc("has_role", {
+      _user_id: userId,
+      _role: "admin",
+    });
+    if (roleError) throw new Error("Could not verify admin access.");
+    if (!isAdmin) {
+      return {
+        isAdmin: false,
+        payments: [] as AdminStablesPaymentRow[],
+        travelRuleOpen: [] as AdminStablesPaymentRow[],
+        travelRuleUnmatched: [] as AdminUnmatchedTravelRule[],
+      };
+    }
+
+    const [recent, open, unmatched] = await Promise.all([
+      supabase
+        .from("payments")
+        .select(STABLES_PAYMENT_COLUMNS)
+        .order("created_at", { ascending: false })
+        .limit(50),
+      supabase
+        .from("payments")
+        .select(STABLES_PAYMENT_COLUMNS)
+        .not("travel_rule_requested_at", "is", null)
+        .is("travel_rule_resolved_at", null)
+        .order("travel_rule_requested_at", { ascending: false })
+        .limit(50),
+      supabase
+        .from("stables_webhook_events")
+        .select("event_id, event_object_id, payload, received_at, process_error")
+        .eq("event_type", "travel_rule.wallet_verification_required")
+        .is("processed_at", null)
+        .order("received_at", { ascending: false })
+        .limit(50),
+    ]);
+    for (const result of [recent, open, unmatched]) {
+      if (result.error) throw new Error(result.error.message);
+    }
+
+    const text = (value: unknown) => (typeof value === "string" ? value : null);
+    return {
+      isAdmin: true,
+      payments: (recent.data ?? []) as unknown as AdminStablesPaymentRow[],
+      travelRuleOpen: (open.data ?? []) as unknown as AdminStablesPaymentRow[],
+      travelRuleUnmatched: (unmatched.data ?? []).map((row): AdminUnmatchedTravelRule => {
+        const object = ((row.payload as { event_object?: unknown } | null)?.event_object ??
+          {}) as Record<string, unknown>;
+        return {
+          eventId: row.event_id,
+          reference: text(object["transaction_reference_id"]) ?? row.event_object_id,
+          verificationUrl: text(object["verification_url"]),
+          expiresAt: text(object["expires_at"]),
+          receivedAt: row.received_at,
+          note: row.process_error,
+        };
+      }),
+    };
+  });
 
 export const getAdminOverview = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
