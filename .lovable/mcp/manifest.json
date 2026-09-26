@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "sdk_version": "0.28.0",
+  "path": "/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://zmcbnknjatrfwrcfvtzt.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "lamportpay-bridge",
+      "version": "0.1.0",
+      "title": "LamportPay Bridge"
+    },
+    "tools": [
+      {
+        "name": "get_product_overview",
+        "title": "Get product overview",
+        "description": "Return an overview of LamportPay: what it does, the demo transfer flow steps, current capabilities, and what is intentionally disabled.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_corridors",
+        "title": "List payout corridors",
+        "description": "List the demo payout corridors LamportPay supports, with their demo FX rate against USD, plus supported payout methods and sender currencies.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "quote_transfer",
+        "title": "Quote a demo transfer",
+        "description": "Calculate a demo LamportPay quote: crypto amount in, fees, and the local currency amount the recipient would receive. Uses indicative demo rates; no funds move.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "amount": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Amount of the input token to send."
+            },
+            "token": {
+              "type": "string",
+              "enum": [
+                "USDC",
+                "SOL",
+                "USDT",
+                "JUP",
+                "RAY",
+                "PYTH",
+                "BONK"
+              ],
+              "description": "Input crypto token symbol, e.g. SOL or USDC."
+            },
+            "currency": {
+              "type": "string",
+              "minLength": 3,
+              "description": "Destination local currency code, e.g. PKR, INR, NGN."
+            }
+          },
+          "required": [
+            "amount",
+            "token",
+            "currency"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "explain_fees",
+        "title": "Explain LamportPay fees",
+        "description": "Explain how LamportPay's demo fee model works, optionally broken down for a specific USD amount.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "usdAmount": {
+              "description": "Optional USD send amount to break the fees down for.",
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_swap_config",
+        "title": "Get swap configuration",
+        "description": "Return the SOL to USDC swap configuration used by LamportPay's Jupiter demo: supported mints, decimals, and the enforced test amount limits.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
