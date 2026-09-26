@@ -21,6 +21,7 @@ vi.mock("@/lib/stables/client.server", async (importOriginal) => {
     validatePaymentMethod: vi.fn(),
     createTransfer: vi.fn(),
     getTransfer: vi.fn(),
+    simulateTransferDeposit: vi.fn(),
   };
 });
 vi.mock("@/lib/solana-rpc.server", () => ({ rpc: vi.fn() }));
@@ -60,6 +61,8 @@ const ENV_KEYS = [
   "STABLES_WEBHOOK_SECRET",
   "PAYMENT_MIN_USDC",
   "PAYMENT_MAX_USDC",
+  "PAYMENT_MIN_USDT",
+  "PAYMENT_MAX_USDT",
 ] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -73,8 +76,11 @@ beforeEach(() => {
     STABLES_API_KEY: "sti_live_fixture",
     STABLES_API_URL: "https://api.stables.money",
     STABLES_WEBHOOK_SECRET: WEBHOOK_SECRET,
-    PAYMENT_MIN_USDC: "",
-    PAYMENT_MAX_USDC: "",
+    // Small test limits; the "payment limits" tests clear them to check the defaults.
+    PAYMENT_MIN_USDC: "50",
+    PAYMENT_MAX_USDC: "100",
+    PAYMENT_MIN_USDT: "50",
+    PAYMENT_MAX_USDT: "100",
   });
   user = { id: randomUUID(), email: "user@example.com" };
 });
@@ -132,8 +138,6 @@ async function quotedPayment(amount = "75") {
 }
 
 const BENEFICIARY = {
-  recipientType: "individual" as const,
-  accountHolderName: "Asha Rao",
   bankName: "State Bank",
   accountNumber: "123456789012",
   details: { ifsc_code: "SBIN0000001" },
@@ -331,41 +335,84 @@ describe("destination support is decided by Stables", () => {
 // ------------------------------------------------------------------- limits
 
 describe("payment limits", () => {
-  it.each(["49.999999", "100.000001", "0"])(
-    "rejects %s USDC before calling Stables",
+  beforeEach(() => {
+    for (const key of ENV_KEYS.filter((k) => k.startsWith("PAYMENT_"))) process.env[key] = "";
+  });
+
+  it.each(["99.999999", "1000000.000001", "0"])(
+    "rejects %s USDC before calling Stables (defaults 100 to 1,000,000)",
     async (amount) => {
       await expect(
         service.createPayment(user, { amount, country: "IN", currency: "inr" }),
       ).rejects.toMatchObject({
         status: 400,
         code: "amount_out_of_range",
-        message: "During the pilot, payments must be between 50 and 100 USDC.",
+        message: "Payments must be between 100 and 1,000,000 USDC.",
       });
       expect(api.createQuote).not.toHaveBeenCalled();
     },
   );
 
-  it("accepts both bounds", async () => {
-    await expect(createPayment("50")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
+  it("accepts both default bounds", async () => {
     await expect(createPayment("100")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
+    await expect(createPayment("1000000")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
   });
 
-  it("reads both limits from the environment", async () => {
+  it("reads each stablecoin's limits from the environment", async () => {
     process.env["PAYMENT_MIN_USDC"] = "10";
     process.env["PAYMENT_MAX_USDC"] = "20";
+    process.env["PAYMENT_MIN_USDT"] = "30";
+    process.env["PAYMENT_MAX_USDT"] = "40";
     await expect(createPayment("15")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
     await expect(
       service.createPayment(user, { amount: "25", country: "IN", currency: "inr" }),
-    ).rejects.toMatchObject({
-      message: "During the pilot, payments must be between 10 and 20 USDC.",
-    });
+    ).rejects.toMatchObject({ message: "Payments must be between 10 and 20 USDC." });
+    await expect(
+      service.createPayment(user, {
+        amount: "15",
+        country: "IN",
+        currency: "inr",
+        sourceCurrency: "usdt",
+      }),
+    ).rejects.toMatchObject({ message: "Payments must be between 30 and 40 USDT." });
   });
 
   it("refuses to take payments with an inverted configuration", async () => {
     process.env["PAYMENT_MIN_USDC"] = "200";
+    process.env["PAYMENT_MAX_USDC"] = "150";
     await expect(
       service.createPayment(user, { amount: "150", country: "IN", currency: "inr" }),
     ).rejects.toMatchObject({ status: 503, code: "limits_misconfigured" });
+  });
+});
+
+describe("Stables refusing the amount", () => {
+  it("shows Stables' reason when it refuses the amount at the preview quote", async () => {
+    api.createQuote.mockRejectedValueOnce(
+      new StablesError("Amount exceeds the per-transaction limit for this customer", 400),
+    );
+    await expect(
+      service.createPayment(user, { amount: "75", country: "IN", currency: "inr" }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "amount_rejected",
+      message: "Stables can't accept 75 USDC for this payment.",
+      extra: { reason: "Amount exceeds the per-transaction limit for this customer" },
+    });
+  });
+
+  it("recognises Stables' limit error codes too", async () => {
+    const payment = await quotedPayment();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockRejectedValueOnce(
+      new StablesError("Transfer rejected", 400, [], "amount_limit_exceeded"),
+    );
+    await expect(
+      service.createPaymentTransfer(user, payment.id, {
+        purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+        beneficiary: BENEFICIARY,
+      }),
+    ).rejects.toMatchObject({ code: "amount_rejected", extra: { reason: "Transfer rejected" } });
   });
 });
 
@@ -522,13 +569,27 @@ describe("deposit verification", () => {
 
   it("requires exactly the deposit amount", async () => {
     const { id, deposit, payer } = await prepared();
-    for (const amount of [74_999_999n, 75_000_001n]) {
+    for (const [amount, shown] of [
+      [74_999_999n, "74.999999"],
+      [75_000_001n, "75.000001"],
+    ] as const) {
       const { signature } = await fund({ from: payer, to: deposit, amount });
       await expect(service.verifyFunding(user, id, signature)).rejects.toEqual(
-        rejected(new RegExp(`deposit address received ${amount} USDC .* exactly 75000000`)),
+        rejected(new RegExp(`deposit address received ${shown} USDC .* exactly 75 USDC`)),
       );
     }
     expect(paymentRow(id)["funding_signature"]).toBeNull();
+  });
+
+  it("warns not to send again once a wrong amount reached the deposit address", async () => {
+    const { id, deposit, payer } = await prepared();
+    const { signature } = await fund({ from: payer, to: deposit, amount: 75_500_000n });
+    await expect(service.verifyFunding(user, id, signature)).rejects.toMatchObject({
+      code: "funding_rejected",
+    });
+    const view = await service.getPaymentView(user, id);
+    expect(view.status).toBe("AWAITING_FUNDS_COLLECTION");
+    expect(view.depositIssue).toMatchObject({ received: "75.5", expected: "75" });
   });
 
   it("only counts USDC, by mint", async () => {
@@ -1032,5 +1093,202 @@ describe("reconciliation job", () => {
     await seedTransferPayment("IN_PROGRESS");
     const report = await service.reconcilePayments({ deadline: Date.now() - 1 });
     expect(report).toMatchObject({ stoppedEarly: true, transfers: { checked: 0 } });
+  });
+});
+
+// ------------------------------------------------------- own-account payouts
+
+describe("payouts to the user's own account", () => {
+  it("names the account holder from the approved Stables record, never the browser", async () => {
+    const payment = await quotedPayment();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75"));
+    await service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+      beneficiary: BENEFICIARY,
+    });
+
+    const sent = api.createTransfer.mock.lastCall![1];
+    expect(sent.destination).toMatchObject({
+      account_holder_name: "Asha Rao",
+      recipient_type: "individual",
+    });
+    expect(paymentRow(payment.id)["beneficiary_summary"]).toEqual({
+      recipient_type: "individual",
+      own_account: true,
+      account_holder_name: "Asha Rao",
+      bank_name: "State Bank",
+      bank_country: "IN",
+      account_kind: "account_number",
+      account: "••••9012",
+    });
+    expect((await service.getKycStatus(user)).verifiedName).toBe("Asha Rao");
+  });
+
+  it("refuses when Stables holds no name for the customer", async () => {
+    const payment = await quotedPayment();
+    api.getCustomer.mockResolvedValue({
+      ...customer("cus_1", "approved", user.id),
+      first_name: null,
+      last_name: null,
+    });
+    await expect(
+      service.createPaymentTransfer(user, payment.id, {
+        purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+        beneficiary: BENEFICIARY,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "verified_name_missing" });
+    expect(api.createTransfer).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------- USDT
+
+describe("USDT payments", () => {
+  async function usdtQuoted() {
+    api.createQuote.mockResolvedValueOnce(
+      quote("75", "inr", "6232.5", {
+        source: { currency: "USDT", network: "solana", amount: "75" },
+      }),
+    );
+    const created = await service.createPayment(user, {
+      amount: "75",
+      country: "IN",
+      currency: "inr",
+      sourceCurrency: "usdt",
+    });
+    api.createCustomerWithVerificationLink.mockResolvedValueOnce({
+      customer_id: "cus_1",
+      kyc_link: "https://kyc.example/1",
+    });
+    await service.startKyc(user, { returnUrl: RETURN_URL });
+    api.getCustomer.mockResolvedValue(customer("cus_1", "approved", user.id));
+    api.createQuote.mockResolvedValueOnce(
+      quote("75", "inr", "6232.5", {
+        source: { currency: "USDT", network: "solana", amount: "75" },
+      }),
+    );
+    return service.quotePayment(user, created.id);
+  }
+
+  it("quotes, transfers and expects the deposit in USDT", async () => {
+    const quoted = await usdtQuoted();
+    expect(quoted.source).toMatchObject({ currency: "usdt", amount: "75" });
+    expect(api.createQuote.mock.lastCall![1].source).toEqual({
+      currency: "usdt",
+      network: "solana",
+      amount: "75",
+    });
+
+    const deposit = newWallet();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(
+      transfer("tr_1", deposit, "75", "awaiting_funds_collection", {
+        source_deposit_instructions: {
+          wallet_address: deposit,
+          currency: "usdt",
+          network: "solana",
+          amount: "75",
+        },
+      }),
+    );
+    const transferred = await service.createPaymentTransfer(user, quoted.id, {
+      purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+      beneficiary: BENEFICIARY,
+    });
+    expect(transferred.deposit).toMatchObject({ address: deposit, currency: "usdt", amount: "75" });
+  });
+
+  it("stops a USDT payment whose deposit instructions ask for USDC", async () => {
+    const quoted = await usdtQuoted();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75"));
+    const transferred = await service.createPaymentTransfer(user, quoted.id, {
+      purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+      beneficiary: BENEFICIARY,
+    });
+    expect(transferred.deposit).toBeNull();
+    expect(transferred.failureReason).toMatch(/not USDT on Solana/);
+  });
+});
+
+// ------------------------------------------------------------------ sandbox
+
+describe("sandbox deposit simulation", () => {
+  const admin = { id: "admin-1", email: "ops@example.com" };
+
+  it("is refused with a live key", async () => {
+    const { id } = await paymentAwaitingFunds();
+    await expect(service.simulateSandboxDeposit(id, admin)).rejects.toMatchObject({
+      status: 403,
+      code: "sandbox_only",
+    });
+    expect(api.simulateTransferDeposit).not.toHaveBeenCalled();
+  });
+
+  it("simulates the deposit of a transfer waiting for funds, once per transfer key", async () => {
+    const { id } = await paymentAwaitingFunds();
+    process.env["STABLES_API_KEY"] = "sti_test_fixture";
+    process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    api.simulateTransferDeposit.mockResolvedValue({
+      transfer_id: "tr_1",
+      simulation_id: "sim_1",
+      scenario: "success",
+      deposit_status: "received",
+    });
+
+    await expect(service.simulateSandboxDeposit(id, admin)).resolves.toMatchObject({
+      simulation_id: "sim_1",
+    });
+    await service.simulateSandboxDeposit(id, admin);
+    const [first, second] = api.simulateTransferDeposit.mock.calls;
+    expect(first![1]).toBe("tr_1");
+    expect(second![2]).toBe(first![2]); // same idempotency key: Stables replays, no second deposit
+    expect((await service.getPaymentView(user, id)).simulatedDeposit).toBe(true);
+  });
+
+  it("only applies to a transfer still waiting for funds", async () => {
+    const payment = await seedTransferPayment("IN_PROGRESS");
+    process.env["STABLES_API_KEY"] = "sti_test_fixture";
+    process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    await expect(service.simulateSandboxDeposit(payment.id, admin)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+});
+
+// ---------------------------------------------------- history and receipts
+
+describe("history and receipts", () => {
+  it("lists the user's payments and records the completion time for the receipt", async () => {
+    const { id, deposit } = await paymentAwaitingFunds();
+    api.getTransfer.mockResolvedValueOnce(
+      transfer("tr_1", deposit, "75", "completed", {
+        actual_payout: { amount: "6230.10", currency: "INR" },
+      }),
+    );
+    await deliver(transferEvent("tr_1", "COMPLETED"));
+
+    const [item] = await service.listPayments(user);
+    expect(item).toMatchObject({
+      id,
+      status: "COMPLETED",
+      accountHolder: "Asha Rao",
+      actualPayout: { currency: "inr", amount: "6230.1" },
+    });
+    const receipt = await service.getPaymentView(user, id);
+    expect(receipt.completedAt).not.toBeNull();
+    expect(receipt.transferId).toBe("tr_1");
+    expect(receipt.beneficiary?.account).toBe("••••9012");
+  });
+
+  it("matches a Travel Rule reference that is our own payment ID", async () => {
+    const { id } = await paymentAwaitingFunds();
+    await deliver(travelRuleEvent(id));
+    expect(paymentRow(id)["travel_rule_reference"]).toBe(id);
+    const event = db
+      .table("payment_events")
+      .find((e) => e["kind"] === "travel_rule_verification_required");
+    expect(event?.["detail"]).toMatchObject({ matched_by: "payment_id" });
   });
 });

@@ -3,11 +3,12 @@
  *
  *   create payment (a Stables preview quote decides whether the destination is
  *   supported) → Stables customer + hosted KYC (verified, base_payout)
- *   → quote (USDC on Solana, checked against expires_at) → beneficiary
- *   validated by Stables → transfer → user sends USDC from their own wallet to
- *   the single-use deposit address → server verifies the finalized Solana
- *   transaction → Stables webhooks (processed after acknowledging) and the
- *   reconciliation job drive the rest.
+ *   → quote (USDC or USDT on Solana, checked against expires_at) → the user's
+ *   own bank account (holder name locked to the Stables customer record),
+ *   validated by Stables → transfer → user sends the stablecoin from their own
+ *   wallet to the single-use deposit address → server verifies the finalized
+ *   Solana transaction → Stables webhooks (processed after acknowledging) and
+ *   the reconciliation job drive the rest.
  *
  * LamportPay keeps no list of countries or currencies: Stables decides what is
  * supported, and which beneficiary fields a destination needs. LamportPay
@@ -29,6 +30,7 @@ import type {
   BankDetailField,
   CreateQuoteRequest,
   PurposeCode,
+  SimulatedDeposit,
   StablesCustomer,
   StablesFees,
   StablesQuote,
@@ -37,10 +39,11 @@ import type {
   StablesWebhookEvent,
   ValidatePaymentMethodResponse,
 } from "@/lib/stables/types";
+import { PAYMENT_CURRENCY_MINTS, isPaymentCurrency, type PaymentCurrency } from "@/lib/tokens";
 import type { AuthenticatedUser } from "./auth.server";
 import * as ledger from "./ledger.server";
 import type { PaymentRow, StablesCustomerRow } from "./ledger.server";
-import { getPaymentLimits, type PaymentLimits } from "./limits.server";
+import { getPaymentLimits, groupThousands, type PaymentLimits } from "./limits.server";
 import {
   checkTransition,
   isTransferState,
@@ -49,7 +52,15 @@ import {
   type PaymentState,
   type TransferState,
 } from "./state";
-import { toPaymentView, type KycStatus, type PaymentView, type StoredFees } from "./view";
+import {
+  toPaymentListItem,
+  toPaymentView,
+  type BeneficiarySummary,
+  type KycStatus,
+  type PaymentListItem,
+  type PaymentView,
+  type StoredFees,
+} from "./view";
 
 /** A field Stables flagged on the beneficiary, in Stables' snake_case naming. */
 export type FieldIssue = { field: string | null; message: string };
@@ -73,7 +84,19 @@ const KYC_LINK_TTL_SECONDS = 1800;
 const QUOTE_SAFETY_MARGIN_MS = 15_000;
 
 const SANDBOX_FUNDING_MESSAGE =
-  "On-chain funding is disabled with the Stables sandbox: sandbox deposit addresses are not real, and mainnet USDC sent to one would be lost. Use a production key for the real-money test.";
+  "On-chain funding is disabled with the Stables sandbox: sandbox deposit addresses are not real, and mainnet USDC or USDT sent to one would be lost. In the sandbox an admin simulates the deposit instead; use a production key for the real-money test.";
+
+/** The funding stablecoin of a stored payment (the schema allows only these). */
+function currencyOf(payment: PaymentRow): PaymentCurrency {
+  if (!isPaymentCurrency(payment.source_currency)) {
+    throw new Error(
+      `Payment ${payment.id} has unknown source currency ${payment.source_currency}.`,
+    );
+  }
+  return payment.source_currency;
+}
+
+const label = (currency: string) => currency.toUpperCase();
 
 function requireStables(): Configured {
   const config = getStablesConfig();
@@ -160,6 +183,24 @@ function notSupported(country: string, currency: string, reason: string): Paymen
   );
 }
 
+/**
+ * Stables refused because of the amount: its per-customer limits (by
+ * verification level, per transaction, daily, monthly), a corridor minimum or
+ * maximum. These can surface at the quote or only at transfer creation
+ * ("limits are evaluated at execution time"). Its own wording is passed on.
+ */
+function amountRejected(error: StablesError, amount: string): PaymentError | null {
+  if (!isRejection(error)) return null;
+  const text = `${error.code ?? ""} ${error.message}`;
+  if (!/amount|limit|minimum|maximum|exceed|too (low|high|small|large)/i.test(text)) return null;
+  return new PaymentError(
+    `Stables can't accept ${amount} for this payment.`,
+    422,
+    "amount_rejected",
+    { reason: error.message },
+  );
+}
+
 async function viewOf(payment: PaymentRow): Promise<PaymentView> {
   return toPaymentView(payment, await ledger.listPaymentEvents(payment.id));
 }
@@ -183,20 +224,20 @@ function minorOrNull(amount: string | undefined | null, currency: string): numbe
 
 // ------------------------------------------------------------------- limits
 
-function paymentLimits(): PaymentLimits {
+function paymentLimits(currency: PaymentCurrency): PaymentLimits {
   try {
-    return getPaymentLimits();
+    return getPaymentLimits(currency);
   } catch (e) {
     console.error("[payments] invalid payment limits:", e instanceof Error ? e.message : e);
     throw new PaymentError("Payments are temporarily unavailable.", 503, "limits_misconfigured");
   }
 }
 
-function checkLimits(amountMinor: bigint) {
-  const limits = paymentLimits();
+function checkLimits(amountMinor: bigint, currency: PaymentCurrency) {
+  const limits = paymentLimits(currency);
   if (amountMinor < limits.minMinor || amountMinor > limits.maxMinor) {
     throw new PaymentError(
-      `During the pilot, payments must be between ${limits.min} and ${limits.max} USDC.`,
+      `Payments must be between ${groupThousands(limits.min)} and ${groupThousands(limits.max)} ${label(currency)}.`,
       400,
       "amount_out_of_range",
     );
@@ -209,6 +250,18 @@ function isCustomerApproved(row: StablesCustomerRow | null): boolean {
   return row?.verification_status === "approved" && row.base_payout_status === "approved";
 }
 
+/** "First Last" as on the Stables customer record, or null when it has no name. */
+function customerName(record: {
+  first_name?: string | null;
+  last_name?: string | null;
+}): string | null {
+  const name = [record.first_name, record.last_name]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || null;
+}
+
 function kycStatusOf(row: StablesCustomerRow | null): KycStatus {
   const linkLive = row?.kyc_link_expires_at && Date.parse(row.kyc_link_expires_at) > Date.now();
   return {
@@ -217,6 +270,8 @@ function kycStatusOf(row: StablesCustomerRow | null): KycStatus {
     subStatus: row?.verification_sub_status ?? [],
     kycLink: linkLive ? row!.kyc_link : null,
     kycLinkExpiresAt: linkLive ? row!.kyc_link_expires_at : null,
+    // Only a name Stables holds on an approved record is offered for payouts.
+    verifiedName: row && isCustomerApproved(row) ? customerName(row) : null,
   };
 }
 
@@ -237,6 +292,9 @@ async function syncCustomer(
     base_payout_status:
       customer.entitlements?.find((e) => e.name === "base_payout")?.status ??
       row.base_payout_status,
+    // Payout account holders must match this name (Stables' own-account rule).
+    first_name: customer.first_name?.trim() || row.first_name,
+    last_name: customer.last_name?.trim() || row.last_name,
   });
   await advanceKycPayments(userId, updated, source);
   return updated;
@@ -370,13 +428,17 @@ export async function startKyc(
 // ----------------------------------------------------------------- payments
 
 function quoteRequest(
-  amountMinor: bigint,
+  source: { amountMinor: bigint; currency: PaymentCurrency },
   country: string,
   currency: string,
   options: { preview: true } | { paymentId: string },
 ): CreateQuoteRequest {
   return {
-    source: { currency: "usdc", network: "solana", amount: toMajor(amountMinor, "usdc") },
+    source: {
+      currency: source.currency,
+      network: "solana",
+      amount: toMajor(source.amountMinor, source.currency),
+    },
     destination: { currency, country, network: "bank" },
     ...("preview" in options ? { preview: true } : { metadata: { payment_id: options.paymentId } }),
   };
@@ -396,19 +458,24 @@ function storedFees(fees: StablesFees | null | undefined): StoredFees | null {
 
 export async function createPayment(
   user: AuthenticatedUser,
-  input: { amount: string; country: string; currency: string },
+  input: { amount: string; country: string; currency: string; sourceCurrency?: PaymentCurrency },
 ): Promise<PaymentView> {
   const config = requireStables();
   const country = input.country.trim().toUpperCase();
   const currency = input.currency.trim().toLowerCase();
+  const sourceCurrency = input.sourceCurrency ?? "usdc";
 
   let amountMinor: bigint;
   try {
-    amountMinor = toMinor(input.amount, "usdc");
+    amountMinor = toMinor(input.amount, sourceCurrency);
   } catch {
-    throw new PaymentError("Enter a USDC amount with at most 6 decimal places.", 400);
+    throw new PaymentError(
+      `Enter a ${label(sourceCurrency)} amount with at most 6 decimal places.`,
+      400,
+    );
   }
-  checkLimits(amountMinor);
+  checkLimits(amountMinor, sourceCurrency);
+  const amountText = `${groupThousands(toMajor(amountMinor, sourceCurrency))} ${label(sourceCurrency)}`;
 
   const customer = await ledger.getStablesCustomerForUser(user.id);
   if (customer?.verification_status === "rejected") {
@@ -425,11 +492,14 @@ export async function createPayment(
   try {
     estimate = await stables.createQuote(
       config,
-      quoteRequest(amountMinor, country, currency, { preview: true }),
+      quoteRequest({ amountMinor, currency: sourceCurrency }, country, currency, { preview: true }),
     );
   } catch (e) {
-    if (e instanceof StablesError && isRejection(e))
-      throw notSupported(country, currency, e.message);
+    if (e instanceof StablesError) {
+      const byAmount = amountRejected(e, amountText);
+      if (byAmount) throw byAmount;
+      if (isRejection(e)) throw notSupported(country, currency, e.message);
+    }
     rethrow(e);
   }
   if (estimate.destination.currency.toLowerCase() !== currency) {
@@ -442,6 +512,7 @@ export async function createPayment(
 
   let payment = await ledger.insertPayment({
     user_id: user.id,
+    source_currency: sourceCurrency,
     source_amount_minor: Number(amountMinor),
     destination_currency: currency,
     destination_country: country,
@@ -471,6 +542,64 @@ export async function getPaymentView(
   return viewOf(await ownedPayment(user, paymentId));
 }
 
+/** The signed-in user's payments, newest first (payment history). */
+export async function listPayments(user: AuthenticatedUser): Promise<PaymentListItem[]> {
+  return (await ledger.listPaymentsForUser(user.id, 100)).map(toPaymentListItem);
+}
+
+// ------------------------------------------------------------------ sandbox
+
+/**
+ * SANDBOX ONLY, admins only (the caller checks the role): ask Stables to act as
+ * if the deposit for this payment's transfer arrived. Refused outright with a
+ * live key or a production URL. Stables then sends the transfer webhooks as for
+ * a real deposit. The key is per transfer, so a repeat replays the first result.
+ */
+export async function simulateSandboxDeposit(
+  paymentId: string,
+  actor: { id: string; email?: string | null },
+): Promise<SimulatedDeposit> {
+  const config = requireStables();
+  if (config.apiKey.startsWith("sti_live_") || config.environment !== "sandbox") {
+    throw new PaymentError(
+      "Deposit simulation is sandbox-only; it is refused with a live Stables key.",
+      403,
+      "sandbox_only",
+    );
+  }
+  const payment = await ledger.getPayment(paymentId);
+  if (!payment) throw new PaymentError("Payment not found.", 404);
+  if (!payment.transfer_id)
+    throw new PaymentError("This payment has no Stables transfer yet.", 409);
+  if (!FUNDABLE.includes(ledger.paymentState(payment))) {
+    throw new PaymentError(
+      `Only a transfer waiting for funds can take a deposit; this one is ${payment.status}.`,
+      409,
+    );
+  }
+
+  let result: SimulatedDeposit;
+  try {
+    result = await stables.simulateTransferDeposit(
+      config,
+      payment.transfer_id,
+      idempotencyKey("lamportpay", "sandbox-deposit", payment.transfer_id),
+    );
+  } catch (e) {
+    rethrow(e);
+  }
+  await ledger.recordEvent(payment.id, "sandbox_deposit_simulated", "api", {
+    detail: {
+      simulation_id: result.simulation_id,
+      scenario: result.scenario,
+      deposit_status: result.deposit_status,
+      admin_id: actor.id,
+      admin_email: actor.email ?? null,
+    },
+  });
+  return result;
+}
+
 export async function quotePayment(
   user: AuthenticatedUser,
   paymentId: string,
@@ -482,7 +611,9 @@ export async function quotePayment(
     throw new PaymentError(`A quote is not possible while the payment is ${payment.status}.`, 409);
   }
   // Limits may have been lowered since the payment was created.
-  checkLimits(BigInt(payment.source_amount_minor));
+  const sourceCurrency = currencyOf(payment);
+  checkLimits(BigInt(payment.source_amount_minor), sourceCurrency);
+  const amountText = `${groupThousands(toMajor(BigInt(payment.source_amount_minor), sourceCurrency))} ${label(sourceCurrency)}`;
 
   const stored = await ledger.getStablesCustomerForUser(user.id);
   if (!stored)
@@ -512,20 +643,30 @@ export async function quotePayment(
       quote = await stables.createQuote(
         config,
         quoteRequest(
-          BigInt(payment.source_amount_minor),
+          { amountMinor: BigInt(payment.source_amount_minor), currency: sourceCurrency },
           payment.destination_country,
           payment.destination_currency,
           { paymentId: payment.id },
         ),
       );
     } catch (e) {
-      if (e instanceof StablesError && isRejection(e)) {
-        throw notSupported(payment.destination_country, payment.destination_currency, e.message);
+      if (e instanceof StablesError) {
+        const byAmount = amountRejected(e, amountText);
+        if (byAmount) throw byAmount;
+        if (isRejection(e)) {
+          throw notSupported(payment.destination_country, payment.destination_currency, e.message);
+        }
       }
       throw e;
     }
 
-    if (toMinor(quote.source.amount, "usdc") !== BigInt(payment.source_amount_minor)) {
+    if (quote.source.currency.toLowerCase() !== sourceCurrency) {
+      throw new PaymentError(
+        `The partner quoted ${label(quote.source.currency)} instead of ${label(sourceCurrency)}.`,
+        502,
+      );
+    }
+    if (toMinor(quote.source.amount, sourceCurrency) !== BigInt(payment.source_amount_minor)) {
       throw new PaymentError("The partner quoted a different amount than requested.", 502);
     }
     if (quote.destination.currency.toLowerCase() !== payment.destination_currency) {
@@ -568,23 +709,32 @@ export async function quotePayment(
   }
 }
 
+/**
+ * The user's own bank account. There is no holder name or recipient type: the
+ * holder is always the user, named as on their approved Stables record.
+ */
 export type BeneficiaryInput = {
-  recipientType: "individual" | "business";
-  accountHolderName: string;
   bankName: string;
   accountNumber?: string;
   iban?: string;
+  /** The user's own date of birth and address, only when Stables asks for them. */
   dateOfBirth?: string;
   address?: { street: string; city: string; state: string; postalCode: string; country: string };
   /** Any further bank fields; Stables says which ones a destination needs. */
   details?: Partial<Record<BankDetailField, string>>;
 };
 
+export const OWN_ACCOUNT_MESSAGE = "Payouts can only be sent to a bank account in your own name.";
+
 function mask(value: string | undefined): string | null {
   return value ? `••••${value.replace(/\s+/g, "").slice(-4)}` : null;
 }
 
-function toBankBeneficiary(payment: PaymentRow, input: BeneficiaryInput): BankBeneficiary {
+function toBankBeneficiary(
+  payment: PaymentRow,
+  input: BeneficiaryInput,
+  holderName: string,
+): BankBeneficiary {
   // Every Stables bank payout needs one of these; everything else is per destination.
   if (!input.accountNumber && !input.iban) {
     throw new PaymentError("Provide an account number or an IBAN.", 400, "beneficiary_invalid", {
@@ -597,8 +747,8 @@ function toBankBeneficiary(payment: PaymentRow, input: BeneficiaryInput): BankBe
   return {
     ...details,
     type: "bank",
-    recipient_type: input.recipientType,
-    account_holder_name: input.accountHolderName,
+    recipient_type: "individual",
+    account_holder_name: holderName,
     bank_name: input.bankName,
     bank_country: payment.destination_country,
     currency: payment.destination_currency.toUpperCase(),
@@ -651,15 +801,16 @@ type DepositInstructions = { address: string; amountMinor: bigint } | { problem:
 function readDepositInstructions(
   transfer: StablesTransfer,
   expectedMinor: bigint,
+  currency: PaymentCurrency,
 ): DepositInstructions {
   const instructions = transfer.source_deposit_instructions;
   if (!instructions?.wallet_address) return { problem: "No crypto deposit address was returned." };
   if (
-    instructions.currency?.toLowerCase() !== "usdc" ||
+    instructions.currency?.toLowerCase() !== currency ||
     instructions.network?.toLowerCase() !== "solana"
   ) {
     return {
-      problem: `Deposit expected in ${instructions.currency} on ${instructions.network}, not USDC on Solana.`,
+      problem: `Deposit expected in ${instructions.currency} on ${instructions.network}, not ${label(currency)} on Solana.`,
     };
   }
   if (!isValidPublicKey(instructions.wallet_address)) {
@@ -667,14 +818,14 @@ function readDepositInstructions(
   }
   let amountMinor: bigint;
   try {
-    amountMinor = toMinor(instructions.amount, "usdc");
+    amountMinor = toMinor(instructions.amount, currency);
   } catch {
     return { problem: `Unreadable deposit amount ${JSON.stringify(instructions.amount)}.` };
   }
   // The user must never be asked to send more (or less) than they agreed to.
   if (amountMinor !== expectedMinor) {
     return {
-      problem: `The deposit asks for ${toMajor(amountMinor, "usdc")} USDC, not the quoted ${toMajor(expectedMinor, "usdc")} USDC.`,
+      problem: `The deposit asks for ${toMajor(amountMinor, currency)} ${label(currency)}, not the quoted ${toMajor(expectedMinor, currency)} ${label(currency)}.`,
     };
   }
   return { address: instructions.wallet_address, amountMinor };
@@ -717,8 +868,40 @@ export async function createPaymentTransfer(
   ) {
     throw new PaymentError("The quote has expired. Get a new quote first.", 409, "quote_expired");
   }
+  const sourceCurrency = currencyOf(payment);
 
-  const destination = toBankBeneficiary(payment, input.beneficiary);
+  // Own account only: Stables requires the account holder name to match its
+  // customer record, so the name comes from the live, approved record and
+  // never from the browser.
+  const stored = await ledger.getStablesCustomerForUser(user.id);
+  if (!stored)
+    throw new PaymentError("Verify your identity with Stables first.", 409, "kyc_required");
+  let holderName: string | null;
+  try {
+    const live = await stables.getCustomer(config, stored.stables_customer_id);
+    const customer = await syncCustomer(user.id, stored, live, "api");
+    if (live.compliance_lock) {
+      throw new PaymentError(
+        "The payout partner has placed a compliance hold on this account.",
+        403,
+      );
+    }
+    if (!isCustomerApproved(customer)) {
+      throw new PaymentError("Identity verification is not complete.", 409, "kyc_required");
+    }
+    holderName = customerName(live);
+  } catch (e) {
+    rethrow(e);
+  }
+  if (!holderName) {
+    throw new PaymentError(
+      `Stables has no name on your verified profile yet, so we can't confirm the account is yours. ${OWN_ACCOUNT_MESSAGE} Contact support.`,
+      409,
+      "verified_name_missing",
+    );
+  }
+
+  const destination = toBankBeneficiary(payment, input.beneficiary, holderName);
 
   let transfer: StablesTransfer;
   try {
@@ -744,10 +927,28 @@ export async function createPaymentTransfer(
       idempotencyKey("lamportpay", "transfer", payment.id, JSON.stringify(body)),
     );
   } catch (e) {
+    // Stables evaluates its per-customer limits here, even after a good quote.
+    if (e instanceof StablesError) {
+      const amount = toMajor(BigInt(payment.source_amount_minor), sourceCurrency);
+      const byAmount = amountRejected(e, `${groupThousands(amount)} ${label(sourceCurrency)}`);
+      if (byAmount) throw byAmount;
+    }
     rethrow(e);
   }
 
-  const deposit = readDepositInstructions(transfer, BigInt(payment.source_amount_minor));
+  // Stables echoes the metadata sent above; anything else means a mix-up.
+  const echoed = transfer.metadata?.["payment_id"];
+  if (echoed && echoed !== payment.id) {
+    console.error(
+      `[payments] transfer ${transfer.id} echoes payment_id ${echoed}, not ${payment.id}`,
+    );
+  }
+
+  const deposit = readDepositInstructions(
+    transfer,
+    BigInt(payment.source_amount_minor),
+    sourceCurrency,
+  );
   const status = normalizeTransferStatus(transfer.status) ?? "CREATED";
   const destinationAmount = minorOrNull(transfer.destination?.amount, payment.destination_currency);
   const fees = storedFees(transfer.fees);
@@ -763,12 +964,14 @@ export async function createPaymentTransfer(
       transfer_snapshot: redactTransfer(transfer),
       purpose_code: input.purposeCode,
       beneficiary_summary: {
-        recipient_type: input.beneficiary.recipientType,
-        account_holder_name: input.beneficiary.accountHolderName,
+        recipient_type: "individual",
+        own_account: true,
+        account_holder_name: holderName,
         bank_name: input.beneficiary.bankName,
         bank_country: payment.destination_country,
+        account_kind: input.beneficiary.iban ? "iban" : "account_number",
         account: mask(input.beneficiary.iban ?? input.beneficiary.accountNumber),
-      },
+      } satisfies BeneficiarySummary,
       ...("address" in deposit
         ? { deposit_address: deposit.address, deposit_amount_minor: Number(deposit.amountMinor) }
         : { failure_reason: deposit.problem }),
@@ -807,8 +1010,9 @@ function shortAddress(address: string): string {
 }
 
 /**
- * Unsigned USDC transfer to the deposit address, for the user's wallet to sign
- * and send. The wallet it is built for becomes the payment's payer wallet.
+ * Unsigned USDC or USDT transfer (the payment's stablecoin) to the deposit
+ * address, for the user's wallet to sign and send. The wallet it is built for
+ * becomes the payment's payer wallet.
  */
 export async function buildFundingTransaction(
   user: AuthenticatedUser,
@@ -826,11 +1030,13 @@ export async function buildFundingTransaction(
   if (payment.funding_signature) throw new PaymentError("This payment is already funded.", 409);
   if (!isValidPublicKey(payer)) throw new PaymentError("Invalid wallet address.", 400);
 
+  const currency = currencyOf(payment);
   const amountMinor = BigInt(payment.deposit_amount_minor);
   const built = await buildUsdcTransferTransaction({
     payer,
     recipient: payment.deposit_address,
     amountMinor,
+    mint: PAYMENT_CURRENCY_MINTS[currency],
   });
   if (!(await ledger.setPayerWallet(payment.id, payer))) {
     throw new PaymentError("This payment is already funded.", 409);
@@ -839,7 +1045,8 @@ export async function buildFundingTransaction(
   return {
     ...built,
     depositAddress: payment.deposit_address,
-    amount: toMajor(amountMinor, "usdc"),
+    amount: toMajor(amountMinor, currency),
+    currency,
   };
 }
 
@@ -871,10 +1078,11 @@ export async function verifyFunding(
   if (!isLikelySignature(signature))
     throw new PaymentError("Provide a valid Solana transaction signature.", 400);
 
+  const currency = currencyOf(payment);
   const payer = payment.payer_wallet ?? declaredPayer;
   if (!payer) {
     throw new PaymentError(
-      "Enter the wallet address you sent the USDC from.",
+      `Enter the wallet address you sent the ${label(currency)} from.`,
       400,
       "payer_required",
     );
@@ -882,7 +1090,7 @@ export async function verifyFunding(
   if (!isValidPublicKey(payer)) throw new PaymentError("Invalid wallet address.", 400);
   if (declaredPayer && declaredPayer !== payer) {
     throw new PaymentError(
-      `This payment is set to be paid from ${shortAddress(payer)}; the USDC must come from that wallet.`,
+      `This payment is set to be paid from ${shortAddress(payer)}; the ${label(currency)} must come from that wallet.`,
       409,
       "payer_mismatch",
     );
@@ -896,11 +1104,22 @@ export async function verifyFunding(
     depositOwner: payment.deposit_address,
     payer,
     expectedMinor: BigInt(payment.deposit_amount_minor),
+    mint: PAYMENT_CURRENCY_MINTS[currency],
   });
   if (result.status === "pending") return { pending: true };
   if (result.status === "failed") {
+    // `received_minor` > 0: funds reached Stables' deposit address anyway (a
+    // wrong amount, or the right amount from another wallet). The payment page
+    // then warns the user not to send again; what Stables does with it drives
+    // the state (see docs/wrong-amount-deposits.md).
     await ledger.recordEvent(payment.id, "funding_rejected", "api", {
-      detail: { signature, payer, reason: result.reason },
+      detail: {
+        signature,
+        payer,
+        reason: result.reason,
+        received_minor: result.receivedMinor.toString(),
+        expected_minor: String(payment.deposit_amount_minor),
+      },
     });
     throw new PaymentError(result.reason, 422, "funding_rejected");
   }
@@ -1033,10 +1252,23 @@ async function applyTravelRuleRequest(event: StablesWebhookEvent): Promise<Event
   const reference = stringOrNull(object["transaction_reference_id"]) ?? event.event_object_id;
   if (!reference) return { processed: true, note: "Travel Rule request without a reference." };
 
-  const found = await ledger.getPaymentByTravelRuleReference(reference);
+  const match = await ledger.getPaymentByTravelRuleReference(reference);
+  // Stables does not document which ID this is: log it raw with what it
+  // matched, so the first real event answers the question.
+  console.info(
+    JSON.stringify({
+      event: "travel_rule_reference",
+      event_id: event.event_id,
+      transaction_reference_id: object["transaction_reference_id"] ?? null,
+      event_object_id: event.event_object_id ?? null,
+      matched_by: match?.matchedBy ?? null,
+      payment_id: match?.payment.id ?? null,
+    }),
+  );
   // Left unprocessed: replayed once a transfer or funding signature with this
   // reference is stored, retried by reconciliation, and listed for admins.
-  if (!found) return { processed: false, note: `No payment matches reference ${reference}.` };
+  if (!match) return { processed: false, note: `No payment matches reference ${reference}.` };
+  const found = match.payment;
 
   const url = httpsUrlOrNull(object["verification_url"]);
   const expiresAt = isoOrNull(object["expires_at"]);
@@ -1074,6 +1306,7 @@ async function applyTravelRuleRequest(event: StablesWebhookEvent): Promise<Event
         detail: {
           event_id: event.event_id,
           reference,
+          matched_by: match.matchedBy,
           expires_at: expiresAt,
           ...(resolvedAt && { already_lifted_at: resolvedAt }),
           ...(!url && { invalid_verification_url: true }),
@@ -1089,6 +1322,36 @@ async function applyTravelRuleRequest(event: StablesWebhookEvent): Promise<Event
   }
   throw new Error(`Payment ${found.id} kept changing concurrently.`);
 }
+
+/**
+ * The payment a transfer event belongs to. Our own `metadata.payment_id` (sent
+ * at creation, echoed by Stables on the transfer resource) is tried first, then
+ * the transfer ID. A metadata match only counts once the payment has stored
+ * this transfer: an event that beats our own create response waits for replay,
+ * so it cannot move the payment before its deposit instructions are saved.
+ */
+async function paymentForTransferEvent(
+  object: Record<string, unknown>,
+  transferId: string | undefined,
+): Promise<PaymentRow | null> {
+  const metadata = object["metadata"];
+  const paymentId =
+    metadata && typeof metadata === "object"
+      ? stringOrNull((metadata as Record<string, unknown>)["payment_id"])
+      : null;
+  if (paymentId && UUID.test(paymentId)) {
+    const payment = await ledger.getPayment(paymentId);
+    if (payment && transferId && payment.transfer_id === transferId) return payment;
+    if (payment?.transfer_id && payment.transfer_id !== transferId) {
+      console.error(
+        `[stables] event for transfer ${transferId} names payment ${paymentId}, which has transfer ${payment.transfer_id}`,
+      );
+    }
+  }
+  return transferId ? ledger.getPaymentByTransferId(transferId) : null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The transfer reached `payment.status` at `at`; lift an earlier Travel Rule hold if that moves it on. */
 async function liftTravelRuleHold(payment: PaymentRow, at: string, source: ledger.EventSource) {
@@ -1172,7 +1435,7 @@ export async function handleStablesEvent(event: StablesWebhookEvent): Promise<Ev
   ) {
     const transferId =
       typeof object["transfer_id"] === "string" ? object["transfer_id"] : event.event_object_id;
-    const payment = transferId ? await ledger.getPaymentByTransferId(transferId) : null;
+    const payment = await paymentForTransferEvent(object, transferId);
     if (!payment) return { processed: false, note: "No payment for this transfer yet." };
 
     // event_object.status is the authoritative current state.
@@ -1254,6 +1517,12 @@ async function reconcileTransfer(
   payment: PaymentRow,
 ): Promise<{ advanced: boolean; settled: boolean; snapshot: Json }> {
   const transfer = await stables.getTransfer(config, payment.transfer_id!);
+  const echoed = transfer.metadata?.["payment_id"];
+  if (echoed && echoed !== payment.id) {
+    console.error(
+      `[reconcile] transfer ${transfer.id} echoes payment_id ${echoed}, not ${payment.id}`,
+    );
+  }
   const status = normalizeTransferStatus(transfer.status);
   let current = payment;
   let advanced = false;

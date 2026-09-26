@@ -56,6 +56,8 @@ const DEFAULTS: Record<string, () => Row> = {
     base_payout_status: null,
     kyc_link: null,
     kyc_link_expires_at: null,
+    first_name: null,
+    last_name: null,
     created_at: now(),
     updated_at: now(),
   }),

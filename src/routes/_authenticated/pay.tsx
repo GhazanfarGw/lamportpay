@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { SiteLayout } from "@/components/site/Layout";
+import { PaymentReceipt } from "@/components/site/PaymentReceipt";
 import { FundingPanelIsland, SwapPanelIsland } from "@/components/site/wallet/WalletIsland";
 import { formatMinor } from "@/lib/money";
 import { PaymentApiError, paymentApi, type FieldIssue } from "@/lib/payments/api-client";
@@ -24,6 +25,17 @@ import {
   type BankDetailField,
   type PurposeCode,
 } from "@/lib/stables/types";
+import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
+
+const OWN_ACCOUNT_MESSAGE = "Payouts can only be sent to a bank account in your own name.";
+
+type Limits = Partial<Record<PaymentCurrency, { min: string; max: string } | null>>;
+
+/** "1000000" → "1,000,000". */
+function grouped(major: string) {
+  const [whole, fraction] = major.split(".");
+  return `${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction ? `.${fraction}` : ""}`;
+}
 
 export const Route = createFileRoute("/_authenticated/pay")({
   validateSearch: (search: Record<string, unknown>): { payment?: string } => ({
@@ -42,16 +54,16 @@ const STATUS_LABELS: Record<string, string> = {
   PAYMENT_CREATED: "Created — verify your identity",
   KYC_PENDING: "Waiting for identity verification",
   KYC_APPROVED: "Identity verified — get a quote",
-  QUOTED: "Quoted — add the recipient's bank details",
+  QUOTED: "Quoted — add your bank account",
   KYC_REJECTED: "Identity verification rejected",
-  CREATED: "Transfer created — send your USDC",
-  AWAITING_FUNDS_COLLECTION: "Waiting for your USDC",
-  FUNDS_COLLECTED: "USDC received by Stables",
+  CREATED: "Transfer created — send your deposit",
+  AWAITING_FUNDS_COLLECTION: "Waiting for your deposit",
+  FUNDS_COLLECTED: "Deposit received by Stables",
   COMPLIANCE_HOLD: "On hold for compliance review",
   IN_PROGRESS: "Converting to local currency",
-  PAYMENT_SUBMITTED: "Payout sent to the recipient's bank",
+  PAYMENT_SUBMITTED: "Payout sent to your bank",
   PAYMENT_PROCESSED: "Bank confirmed the payout",
-  COMPLETED: "Completed — recipient paid",
+  COMPLETED: "Completed — paid into your account",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
   EXPIRED: "Expired before funds arrived",
@@ -63,6 +75,10 @@ const FUNDABLE = new Set(["CREATED", "AWAITING_FUNDS_COLLECTION"]);
 const EVENT_LABELS: Record<string, string> = {
   travel_rule_verification_required: "Stables asked you to verify your sending wallet",
   travel_rule_cleared: "Wallet verification done — Stables released the transfer",
+  funding_verified: "Deposit confirmed on Solana",
+  funding_rejected: "Deposit not accepted",
+  sandbox_deposit_simulated: "Deposit simulated (Stables sandbox)",
+  payout_settled: "Final payout amount recorded",
 };
 
 function money(minor: string | null, currency: string) {
@@ -98,25 +114,30 @@ function PayPage() {
       const res = await fetch("/api/integration-status");
       return (await res.json()) as {
         providers: Array<{ name: string; mode: string }>;
-        guards?: { paymentLimitsUsdc?: { min: string; max: string } | null };
+        guards?: { paymentLimits?: Limits };
       };
     },
   });
   const stablesMode = status.data?.providers.find((p) => p.name === "Stables")?.mode;
-  const limits = status.data?.guards?.paymentLimitsUsdc ?? null;
+  const limits = status.data?.guards?.paymentLimits ?? {};
 
   return (
     <SiteLayout>
       <div className="max-w-4xl mx-auto px-5 py-14 md:py-20 space-y-6">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-primary">
-            USDC → local currency
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-wider text-primary">
+              USDC / USDT → local currency
+            </div>
+            <Link to="/payments" className="text-sm text-primary hover:underline">
+              Payment history
+            </Link>
           </div>
           <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mt-2">Send a payment</h1>
           <p className="text-muted-foreground mt-2">
-            You send USDC from your own wallet straight to a single-use deposit address from
+            You send USDC or USDT from your own wallet straight to a single-use deposit address from
             Stables, our licensed payout partner. Stables verifies your identity, converts, and pays
-            the recipient's bank. LamportPay never holds your funds.
+            out to your own bank account. LamportPay never holds your funds.
           </p>
         </div>
 
@@ -127,8 +148,8 @@ function PayPage() {
         )}
         {stablesMode === "sandbox" && (
           <Notice tone="info">
-            Stables sandbox: identity verification works, but transfers cannot be funded here.
-            Sandbox deposit addresses are not real, so sending USDC is disabled.
+            Stables sandbox: sending from a wallet is disabled because sandbox deposit addresses are
+            not real. An admin simulates the deposit from the admin console instead.
           </Notice>
         )}
 
@@ -185,7 +206,9 @@ function KycCard() {
       {data && approved && (
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-[color:var(--success)]" />
-          Verified by Stables. You can send payments.
+          {data.verifiedName
+            ? `Verified by Stables as ${data.verifiedName}. You can send payments to your own bank account.`
+            : "Verified by Stables. You can send payments."}
         </div>
       )}
 
@@ -290,19 +313,22 @@ function useDestinationOptions() {
   }, []);
 }
 
-function NewPaymentForm({ limits }: { limits: { min: string; max: string } | null }) {
+function NewPaymentForm({ limits: allLimits }: { limits: Limits }) {
   const navigate = useNavigate();
   const { countries, currencies } = useDestinationOptions();
   const [amount, setAmount] = useState("");
+  const [sourceCurrency, setSourceCurrency] = useState<PaymentCurrency>("usdc");
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("");
+  const limits = allLimits[sourceCurrency] ?? null;
+  const coin = sourceCurrency.toUpperCase();
 
   const create = useMutation({
     mutationFn: async () =>
       (
         await paymentApi<PaymentView>("/api/payments", {
           method: "POST",
-          body: { amount, country, currency: currency.toLowerCase() },
+          body: { amount, sourceCurrency, country, currency: currency.toLowerCase() },
         })
       ).data,
     onSuccess: (payment) => void navigate({ to: "/pay", search: { payment: payment.id } }),
@@ -318,15 +344,29 @@ function NewPaymentForm({ limits }: { limits: { min: string; max: string } | nul
           create.mutate();
         }}
       >
-        <div className="grid sm:grid-cols-3 gap-3">
-          <Field label="You send (USDC on Solana)">
-            <input
-              inputMode="decimal"
-              placeholder={limits?.min ?? "50"}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-              className={INPUT}
-            />
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Field label={`You send (${coin} on Solana)`}>
+            <div className="flex gap-2">
+              <input
+                inputMode="decimal"
+                placeholder={limits?.min ?? "100"}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                className={INPUT}
+              />
+              <select
+                aria-label="Stablecoin"
+                value={sourceCurrency}
+                onChange={(e) => setSourceCurrency(e.target.value as PaymentCurrency)}
+                className={`${INPUT} w-auto`}
+              >
+                {PAYMENT_CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
           </Field>
           <Field label="Recipient country">
             <select value={country} onChange={(e) => setCountry(e.target.value)} className={INPUT}>
@@ -354,10 +394,10 @@ function NewPaymentForm({ limits }: { limits: { min: string; max: string } | nul
           </Field>
         </div>
         <p className="text-sm text-muted-foreground">
-          Paid out to a bank account.{" "}
-          {limits && `During the pilot, payments are ${limits.min}–${limits.max} USDC. `}
-          Stables checks whether it can pay out to this country and currency before anything is
-          created.
+          Paid out to a bank account in your own name.{" "}
+          {limits && `Payments are ${grouped(limits.min)}–${grouped(limits.max)} ${coin}. `}
+          Stables checks whether it can pay out to this country and currency, and whether it accepts
+          the amount, before anything is created.
         </p>
         <button
           type="submit"
@@ -384,6 +424,11 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
     refetchInterval: (query) => (query.state.data?.terminal ? false : 5000),
   });
   const setPayment = (p: PaymentView) => queryClient.setQueryData(key, p);
+  // Shares the KycCard's query: the verified name locks the account holder.
+  const kyc = useQuery({
+    queryKey: ["kyc"],
+    queryFn: async () => (await paymentApi<KycStatus>("/api/kyc")).data,
+  });
 
   const quote = useMutation({
     mutationFn: async () =>
@@ -442,19 +487,23 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
           <KV k="You send" v={money(p.source.amountMinor, p.source.currency)} />
           {p.actualPayout ? (
             <KV
-              k="Recipient received"
+              k="Your bank account received"
               v={money(p.actualPayout.amountMinor, p.actualPayout.currency)}
             />
           ) : (
             <KV
-              k={p.quote || p.transferId ? "Recipient gets (quoted)" : "Recipient gets (estimate)"}
+              k={
+                p.quote || p.transferId
+                  ? "Your bank account gets (quoted)"
+                  : "Your bank account gets (estimate)"
+              }
               v={money(p.destination.amountMinor, p.destination.currency)}
             />
           )}
           {p.exchangeRate !== null && (
             <KV
               k="Exchange rate"
-              v={`1 USDC = ${p.exchangeRate} ${p.destination.currency.toUpperCase()}`}
+              v={`1 ${p.source.currency.toUpperCase()} = ${p.exchangeRate} ${p.destination.currency.toUpperCase()}`}
             />
           )}
           {p.fees.map((f) => (
@@ -482,15 +531,34 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
       </Card>
 
       {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
-      {p.status === "QUOTED" && <BeneficiaryForm payment={p} onCreated={setPayment} />}
+      {p.status === "QUOTED" && (
+        <BeneficiaryForm
+          payment={p}
+          verifiedName={kyc.data?.verifiedName ?? null}
+          onCreated={setPayment}
+        />
+      )}
       {p.deposit && FUNDABLE.has(p.status) && !p.funding && (
         <DepositCard payment={p} onFunded={() => void payment.refetch()} />
+      )}
+      {p.status === "COMPLETED" && (
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 font-semibold">
+              <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
+              Paid into your bank account
+            </div>
+            <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
+              View receipt <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </Card>
       )}
       {p.funding && (
         <Card>
           <div className="flex items-center gap-2 font-semibold">
             <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
-            Your USDC deposit is confirmed on Solana
+            Your {p.source.currency.toUpperCase()} deposit is confirmed on Solana
           </div>
           <a
             href={`https://explorer.solana.com/tx/${p.funding.signature}`}
@@ -618,8 +686,6 @@ function QuoteExpiry({ expiresAt }: { expiresAt: string }) {
 }
 
 type BeneficiaryState = {
-  recipientType: "individual" | "business";
-  accountHolderName: string;
   bankName: string;
   accountKind: "account_number" | "iban";
   account: string;
@@ -646,9 +712,9 @@ const DETAIL_LABELS: Record<BankDetailField, string> = {
   bsb_code: "BSB",
   bank_code: "Bank / institution code",
   cnaps: "CNAPS code",
-  phone: "Recipient phone (+country code)",
-  name_in_local_language: "Name in local script",
-  national_identification_number: "National ID number",
+  phone: "Your phone (+country code)",
+  name_in_local_language: "Your name in local script",
+  national_identification_number: "Your national ID number",
 };
 
 const ADDRESS_FIELDS = ["street", "city", "state", "postal_code", "country"] as const;
@@ -665,16 +731,22 @@ function flaggedFields(error: unknown): Map<string, string> {
   return flagged;
 }
 
+/**
+ * The user's own bank account in the payout country. The account holder is the
+ * name on the approved Stables record, shown locked; the user enters only the
+ * bank details (plus date of birth or address if Stables asks for them).
+ * "Review" shows the full payment summary; nothing is sent until "Confirm".
+ */
 function BeneficiaryForm({
   payment,
+  verifiedName,
   onCreated,
 }: {
   payment: PaymentView;
+  verifiedName: string | null;
   onCreated: (p: PaymentView) => void;
 }) {
   const [form, setForm] = useState<BeneficiaryState>({
-    recipientType: "individual",
-    accountHolderName: "",
     bankName: "",
     accountKind: "account_number",
     account: "",
@@ -685,9 +757,9 @@ function BeneficiaryForm({
     postalCode: "",
     addressCountry: payment.destination.country,
     details: {},
-    purposeCode: "PERSONAL_REMITTANCE",
+    purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
   });
-  const [addressOpen, setAddressOpen] = useState(false);
+  const [step, setStep] = useState<"edit" | "review">("edit");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const set = (patch: Partial<BeneficiaryState>) => setForm((f) => ({ ...f, ...patch }));
   const setDetail = (field: BankDetailField, value: string) =>
@@ -710,8 +782,6 @@ function BeneficiaryForm({
           body: {
             purposeCode: form.purposeCode,
             beneficiary: {
-              recipientType: form.recipientType,
-              accountHolderName: form.accountHolderName.trim(),
               bankName: form.bankName.trim(),
               [form.accountKind === "iban" ? "iban" : "accountNumber"]: form.account.trim(),
               dateOfBirth: opt(form.dateOfBirth),
@@ -731,14 +801,19 @@ function BeneficiaryForm({
       ).data;
     },
     onSuccess: onCreated,
+    // Back to the form when Stables names fields to fix; other errors stay on the summary.
+    onError: (error) => {
+      if (error instanceof PaymentApiError && error.fields.length > 0) setStep("edit");
+    },
   });
 
-  // Open the sections holding whatever Stables asked for.
+  // Open or show whatever Stables asked for.
   const flagged = useMemo(() => flaggedFields(create.error), [create.error]);
   useEffect(() => {
-    if (flagged.has("address")) setAddressOpen(true);
     if (BANK_DETAIL_FIELDS.some((f) => flagged.has(f))) setDetailsOpen(true);
   }, [flagged]);
+  const showDob = flagged.has("date_of_birth") || Boolean(form.dateOfBirth);
+  const showAddress = flagged.has("address") || addressStarted;
   const cls = (field: string) =>
     flagged.has(field) ? `${INPUT} border-destructive ring-1 ring-destructive/40` : INPUT;
   const hint = (field: string) =>
@@ -746,42 +821,88 @@ function BeneficiaryForm({
       <span className="block mt-1 text-xs text-destructive">{flagged.get(field)}</span>
     ) : null;
 
+  if (!verifiedName) {
+    return (
+      <Card>
+        <div className="font-semibold">Your bank account ({payment.destination.country})</div>
+        <Notice tone="warn">
+          {OWN_ACCOUNT_MESSAGE} We don't have the name from your verified Stables profile yet, so we
+          can't add an account. Refresh your verification status above; if it stays like this,
+          contact us.
+        </Notice>
+      </Card>
+    );
+  }
+
+  if (step === "review") {
+    return (
+      <PaymentReceipt
+        payment={payment}
+        mode="summary"
+        senderName={verifiedName}
+        account={{
+          holderName: verifiedName,
+          bankName: form.bankName.trim(),
+          kind: form.accountKind,
+          number: form.account.trim(),
+        }}
+        footer={
+          <div className="space-y-3 border-t border-border/50 pt-4">
+            {payment.quote?.expiresAt && <QuoteExpiry expiresAt={payment.quote.expiresAt} />}
+            <Notice tone="info">
+              {OWN_ACCOUNT_MESSAGE} Check the account number carefully: a payout to a wrong account
+              may not be recoverable.
+            </Notice>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => create.mutate()}
+                disabled={create.isPending}
+                className={PRIMARY}
+              >
+                {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                Confirm and create transfer <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep("edit")}
+                disabled={create.isPending}
+                className={SECONDARY}
+              >
+                Edit details
+              </button>
+            </div>
+            {create.error && <ErrorText error={create.error} />}
+          </div>
+        }
+      />
+    );
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    create.mutate();
+    create.reset();
+    setStep("review");
   };
 
   return (
     <Card>
-      <div className="font-semibold">Recipient bank account ({payment.destination.country})</div>
+      <div className="font-semibold">Your bank account ({payment.destination.country})</div>
+      <Notice tone="info">{OWN_ACCOUNT_MESSAGE}</Notice>
       <p className="text-sm text-muted-foreground">
-        These details go straight to Stables for the payout. Stables checks them against the rules
-        for this destination before the transfer is created and says if anything else is needed.
-        LamportPay keeps only the name, bank and the last four digits.
+        The details go straight to Stables for the payout, which checks them against the rules for
+        this country before the transfer is created. LamportPay keeps only the bank name and the
+        last four digits.
       </p>
       <form className="space-y-4" onSubmit={submit}>
         <div className="grid sm:grid-cols-2 gap-3">
-          <Field label="Recipient type">
-            <select
-              value={form.recipientType}
-              onChange={(e) =>
-                set({ recipientType: e.target.value as BeneficiaryState["recipientType"] })
-              }
-              className={cls("recipient_type")}
-            >
-              <option value="individual">Individual</option>
-              <option value="business">Business</option>
-            </select>
-            {hint("recipient_type")}
-          </Field>
-          <Field label={form.recipientType === "business" ? "Company name" : "Account holder name"}>
+          <Field label="Account holder (your verified name)">
             <input
-              required
-              value={form.accountHolderName}
-              onChange={(e) => set({ accountHolderName: e.target.value })}
-              className={cls("account_holder_name")}
+              value={verifiedName}
+              readOnly
+              aria-readonly="true"
+              className={`${INPUT} bg-secondary/60 text-muted-foreground cursor-not-allowed`}
             />
-            {hint("account_holder_name")}
           </Field>
           <Field label="Bank name">
             <input
@@ -813,17 +934,6 @@ function BeneficiaryForm({
             </div>
             {hint(form.accountKind)}
           </Field>
-          {form.recipientType === "individual" && (
-            <Field label="Recipient date of birth (if required)">
-              <input
-                type="date"
-                value={form.dateOfBirth}
-                onChange={(e) => set({ dateOfBirth: e.target.value })}
-                className={cls("date_of_birth")}
-              />
-              {hint("date_of_birth")}
-            </Field>
-          )}
           <Field label="Purpose">
             <select
               value={form.purposeCode}
@@ -837,68 +947,75 @@ function BeneficiaryForm({
               ))}
             </select>
           </Field>
+          {showDob && (
+            <Field label="Your date of birth (Stables asked for it)">
+              <input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(e) => set({ dateOfBirth: e.target.value })}
+                className={cls("date_of_birth")}
+              />
+              {hint("date_of_birth")}
+            </Field>
+          )}
         </div>
 
-        <details
-          open={addressOpen}
-          onToggle={(e) => setAddressOpen((e.target as HTMLDetailsElement).open)}
-          className="rounded-2xl border border-border/60 p-4"
-        >
-          <summary className="text-sm font-semibold cursor-pointer">
-            Recipient address {flagged.has("address") ? "(required)" : "(if required)"}
-          </summary>
-          <div className="mt-4 grid sm:grid-cols-2 gap-3">
-            <Field label="Street address">
-              <input
-                required={addressStarted}
-                value={form.street}
-                onChange={(e) => set({ street: e.target.value })}
-                className={cls("address.street")}
-              />
-              {hint("address.street")}
-            </Field>
-            <Field label="City">
-              <input
-                required={addressStarted}
-                value={form.city}
-                onChange={(e) => set({ city: e.target.value })}
-                className={cls("address.city")}
-              />
-              {hint("address.city")}
-            </Field>
-            <Field label="State / region">
-              <input
-                required={addressStarted}
-                value={form.state}
-                onChange={(e) => set({ state: e.target.value })}
-                className={cls("address.state")}
-              />
-              {hint("address.state")}
-            </Field>
-            <Field label="Postal code">
-              <input
-                required={addressStarted}
-                value={form.postalCode}
-                onChange={(e) => set({ postalCode: e.target.value })}
-                className={cls("address.postal_code")}
-              />
-              {hint("address.postal_code")}
-            </Field>
-            <Field label="Country (2-letter code)">
-              <input
-                required={addressStarted}
-                maxLength={2}
-                value={form.addressCountry}
-                onChange={(e) => set({ addressCountry: e.target.value.toUpperCase() })}
-                className={cls("address.country")}
-              />
-              {hint("address.country")}
-            </Field>
+        {showAddress && (
+          <div className="rounded-2xl border border-border/60 p-4">
+            <div className="text-sm font-semibold">Your address (Stables asked for it)</div>
+            <div className="mt-4 grid sm:grid-cols-2 gap-3">
+              <Field label="Street address">
+                <input
+                  required
+                  value={form.street}
+                  onChange={(e) => set({ street: e.target.value })}
+                  className={cls("address.street")}
+                />
+                {hint("address.street")}
+              </Field>
+              <Field label="City">
+                <input
+                  required
+                  value={form.city}
+                  onChange={(e) => set({ city: e.target.value })}
+                  className={cls("address.city")}
+                />
+                {hint("address.city")}
+              </Field>
+              <Field label="State / region">
+                <input
+                  required
+                  value={form.state}
+                  onChange={(e) => set({ state: e.target.value })}
+                  className={cls("address.state")}
+                />
+                {hint("address.state")}
+              </Field>
+              <Field label="Postal code">
+                <input
+                  required
+                  value={form.postalCode}
+                  onChange={(e) => set({ postalCode: e.target.value })}
+                  className={cls("address.postal_code")}
+                />
+                {hint("address.postal_code")}
+              </Field>
+              <Field label="Country (2-letter code)">
+                <input
+                  required
+                  maxLength={2}
+                  value={form.addressCountry}
+                  onChange={(e) => set({ addressCountry: e.target.value.toUpperCase() })}
+                  className={cls("address.country")}
+                />
+                {hint("address.country")}
+              </Field>
+            </div>
+            {flagged.has("address") && !ADDRESS_FIELDS.some((f) => flagged.has(`address.${f}`)) && (
+              <p className="mt-2 text-xs text-destructive">{flagged.get("address")}</p>
+            )}
           </div>
-          {flagged.has("address") && !ADDRESS_FIELDS.some((f) => flagged.has(`address.${f}`)) && (
-            <p className="mt-2 text-xs text-destructive">{flagged.get("address")}</p>
-          )}
-        </details>
+        )}
 
         <details
           open={detailsOpen}
@@ -906,7 +1023,7 @@ function BeneficiaryForm({
           className="rounded-2xl border border-border/60 p-4"
         >
           <summary className="text-sm font-semibold cursor-pointer">
-            More bank details (only if the recipient's bank uses them)
+            More bank details (only if your bank uses them)
           </summary>
           <div className="mt-4 grid sm:grid-cols-2 gap-3">
             {BANK_DETAIL_FIELDS.map((field) => (
@@ -935,10 +1052,9 @@ function BeneficiaryForm({
           </div>
         </details>
 
-        <Notice tone="info">Wise and Revolut accounts are not supported as recipients.</Notice>
-        <button type="submit" disabled={create.isPending} className={PRIMARY}>
-          {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          Create transfer <ArrowRight className="w-4 h-4" />
+        <Notice tone="info">Wise and Revolut accounts are not supported.</Notice>
+        <button type="submit" className={PRIMARY}>
+          Review payment <ArrowRight className="w-4 h-4" />
         </button>
         {create.error && <ErrorText error={create.error} />}
       </form>
@@ -966,34 +1082,57 @@ function DepositCard({ payment, onFunded }: { payment: PaymentView; onFunded: ()
     onSuccess: onFunded,
   });
 
+  const coin = deposit.currency.toUpperCase();
+  const issue = payment.depositIssue;
+
   return (
     <Card>
-      <div className="font-semibold">Send your USDC</div>
-      <p className="text-sm text-muted-foreground">
-        Send exactly this amount of USDC on Solana to this single-use deposit address. Use it for
-        this payment only.
-      </p>
+      <div className="font-semibold">Send your {coin}</div>
+      {issue ? (
+        // Funds reached the deposit address but did not match: sending again
+        // would pay twice. Stables decides what happens to what it received.
+        <Notice tone="warn">
+          We could not accept your deposit: {issue.reason} {issue.received} {coin} reached the
+          deposit address ({issue.expected} {coin} was expected).{" "}
+          <strong>Do not send again.</strong> Stables decides what happens to the funds it received,
+          and this page follows its status.{" "}
+          <Link to="/contact" className="underline">
+            Contact us
+          </Link>{" "}
+          with your payment ID.
+        </Notice>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Send exactly this amount of {coin} on Solana to this single-use deposit address. Use it
+          for this payment only.
+        </p>
+      )}
       <div className="grid gap-3">
-        <KV k="Amount" v={<CopyValue value={deposit.amount} suffix=" USDC" />} />
+        <KV k="Amount" v={<CopyValue value={deposit.amount} suffix={` ${coin}`} />} />
         <KV k="Network" v="Solana (mainnet)" />
         <KV k="Deposit address" v={<CopyValue value={deposit.address} mono />} />
       </div>
 
-      <FundingPanelIsland
-        paymentId={payment.id}
-        amount={deposit.amount}
-        depositAddress={deposit.address}
-        onFunded={onFunded}
-      />
+      {!issue && (
+        <FundingPanelIsland
+          paymentId={payment.id}
+          amount={deposit.amount}
+          currency={coin}
+          depositAddress={deposit.address}
+          onFunded={onFunded}
+        />
+      )}
 
-      <details className="rounded-2xl border border-border/60 p-4">
-        <summary className="text-sm font-semibold cursor-pointer">
-          Need USDC? Swap SOL → USDC
-        </summary>
-        <div className="mt-4">
-          <SwapPanelIsland />
-        </div>
-      </details>
+      {deposit.currency === "usdc" && !issue && (
+        <details className="rounded-2xl border border-border/60 p-4">
+          <summary className="text-sm font-semibold cursor-pointer">
+            Need USDC? Swap SOL → USDC
+          </summary>
+          <div className="mt-4">
+            <SwapPanelIsland />
+          </div>
+        </details>
+      )}
 
       <details className="rounded-2xl border border-border/60 p-4">
         <summary className="text-sm font-semibold cursor-pointer">
@@ -1001,8 +1140,8 @@ function DepositCard({ payment, onFunded }: { payment: PaymentView; onFunded: ()
         </summary>
         <p className="mt-3 text-sm text-muted-foreground">
           {payment.payerWallet
-            ? "The USDC must come from the wallet this payment was prepared for."
-            : "Enter the wallet you sent from. The USDC must come from, and be signed by, that wallet."}
+            ? `The ${coin} must come from the wallet this payment was prepared for.`
+            : `Enter the wallet you sent from. The ${coin} must come from, and be signed by, that wallet.`}
         </p>
         <form
           className="mt-3 grid gap-2"
@@ -1126,7 +1265,11 @@ function ErrorText({ error }: { error: unknown }) {
   return (
     <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
       {error instanceof Error ? error.message : "Something went wrong."}
-      {reason && <div className="mt-1 text-xs text-muted-foreground">Stables: {reason}</div>}
+      {reason && (
+        <div className="mt-2 rounded-lg bg-background/60 px-3 py-2">
+          <span className="font-semibold">Stables says:</span> {reason}
+        </div>
+      )}
     </div>
   );
 }

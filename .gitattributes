@@ -1,0 +1,2 @@
+# LF everywhere (Prettier expects it), whatever core.autocrlf says on this machine.
+* text=auto eol=lf

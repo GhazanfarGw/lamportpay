@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Copy, RefreshCw, Wallet } from "lucide-react";
@@ -79,10 +80,16 @@ function OpenTravelRule({ row }: { row: AdminStablesPaymentRow }) {
     <div className="rounded-2xl border border-border/60 bg-background p-4 space-y-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <div className="font-mono text-xs">{row.id}</div>
+          <Link
+            to="/admin/stables/$id"
+            params={{ id: row.id }}
+            className="font-mono text-xs text-primary hover:underline"
+          >
+            {row.id}
+          </Link>
           <div className="text-xs text-muted-foreground">
-            {amount(row.source_amount_minor, "usdc")} → {row.destination_currency.toUpperCase()} ·{" "}
-            {row.destination_country}
+            {amount(row.source_amount_minor, row.source_currency)} →{" "}
+            {row.destination_currency.toUpperCase()} · {row.destination_country}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">
@@ -207,9 +214,16 @@ export function StablesPaymentsAdmin() {
                   className="p-3 text-xs flex flex-wrap items-center justify-between gap-2"
                 >
                   <div>
-                    <div className="font-mono">{row.id}</div>
+                    <Link
+                      to="/admin/stables/$id"
+                      params={{ id: row.id }}
+                      className="font-mono text-primary hover:underline"
+                    >
+                      {row.id}
+                    </Link>
                     <div className="text-muted-foreground">
-                      {fmtDate(row.created_at)} · {amount(row.source_amount_minor, "usdc")} →{" "}
+                      {fmtDate(row.created_at)} ·{" "}
+                      {amount(row.source_amount_minor, row.source_currency)} →{" "}
                       {amount(row.destination_amount_minor, row.destination_currency)} ·{" "}
                       {row.destination_country}
                       {row.failure_reason && ` · ${row.failure_reason}`}
@@ -223,6 +237,11 @@ export function StablesPaymentsAdmin() {
                   <div className="flex flex-wrap items-center gap-1">
                     <StatusText value={row.status} />
                     {rule && <TravelRulePill status={rule} />}
+                    {row.deposit_issue && (
+                      <span className="inline-flex items-center rounded-full border border-destructive/20 bg-destructive/10 px-2.5 py-0.5 text-[11px] font-semibold text-destructive">
+                        Deposit mismatch
+                      </span>
+                    )}
                   </div>
                 </div>
               );

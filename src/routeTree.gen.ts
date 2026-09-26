@@ -29,6 +29,8 @@ import { Route as AuthResetRouteImport } from './routes/auth.reset'
 import { Route as BlogIndexRouteImport } from './routes/blog.index'
 import { Route as BlogSlugRouteImport } from './routes/blog.$slug'
 import { Route as AuthenticatedAdminRolesRouteImport } from './routes/_authenticated/admin_.roles'
+import { Route as AuthenticatedPaymentsIndexRouteImport } from './routes/_authenticated/payments.index'
+import { Route as AuthenticatedPaymentsIdRouteImport } from './routes/_authenticated/payments.$id'
 import { Route as ApiCronReconcilePaymentsRouteImport } from './routes/api/cron/reconcile-payments'
 import { Route as ApiJupiterExecuteRouteImport } from './routes/api/jupiter/execute'
 import { Route as ApiJupiterOrderRouteImport } from './routes/api/jupiter/order'
@@ -38,6 +40,7 @@ import { Route as ApiPublicStablesWebhookRouteImport } from './routes/api/public
 import { Route as ApiSolanaHealthRouteImport } from './routes/api/solana/health'
 import { Route as ApiSolanaVerifyTxRouteImport } from './routes/api/solana/verify-tx'
 import { Route as AuthenticatedAdminPaymentsIdRouteImport } from './routes/_authenticated/admin_.payments.$id'
+import { Route as AuthenticatedAdminStablesIdRouteImport } from './routes/_authenticated/admin_.stables.$id'
 import { Route as ApiPaymentsPaymentIdIndexRouteImport } from './routes/api/payments/$paymentId/index'
 import { Route as ApiPaymentsPaymentIdFundingRouteImport } from './routes/api/payments/$paymentId/funding'
 import { Route as ApiPaymentsPaymentIdFundingTransactionRouteImport } from './routes/api/payments/$paymentId/funding-transaction'
@@ -143,6 +146,17 @@ const AuthenticatedAdminRolesRoute = AuthenticatedAdminRolesRouteImport.update({
   path: '/admin/roles',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedPaymentsIndexRoute =
+  AuthenticatedPaymentsIndexRouteImport.update({
+    id: '/payments/',
+    path: '/payments/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPaymentsIdRoute = AuthenticatedPaymentsIdRouteImport.update({
+  id: '/payments/$id',
+  path: '/payments/$id',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const ApiCronReconcilePaymentsRoute =
   ApiCronReconcilePaymentsRouteImport.update({
     id: '/api/cron/reconcile-payments',
@@ -188,6 +202,12 @@ const AuthenticatedAdminPaymentsIdRoute =
   AuthenticatedAdminPaymentsIdRouteImport.update({
     id: '/admin_/payments/$id',
     path: '/admin/payments/$id',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAdminStablesIdRoute =
+  AuthenticatedAdminStablesIdRouteImport.update({
+    id: '/admin_/stables/$id',
+    path: '/admin/stables/$id',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const ApiPaymentsPaymentIdIndexRoute =
@@ -241,6 +261,7 @@ export interface FileRoutesByFullPath {
   '/blog/$slug': typeof BlogSlugRoute
   '/blog/': typeof BlogIndexRoute
   '/admin/roles': typeof AuthenticatedAdminRolesRoute
+  '/payments/$id': typeof AuthenticatedPaymentsIdRoute
   '/api/cron/reconcile-payments': typeof ApiCronReconcilePaymentsRoute
   '/api/jupiter/execute': typeof ApiJupiterExecuteRoute
   '/api/jupiter/order': typeof ApiJupiterOrderRoute
@@ -248,8 +269,10 @@ export interface FileRoutesByFullPath {
   '/api/public/stables-webhook': typeof ApiPublicStablesWebhookRoute
   '/api/solana/health': typeof ApiSolanaHealthRoute
   '/api/solana/verify-tx': typeof ApiSolanaVerifyTxRoute
+  '/payments/': typeof AuthenticatedPaymentsIndexRoute
   '/api/payments/': typeof ApiPaymentsIndexRoute
   '/admin/payments/$id': typeof AuthenticatedAdminPaymentsIdRoute
+  '/admin/stables/$id': typeof AuthenticatedAdminStablesIdRoute
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
@@ -276,6 +299,7 @@ export interface FileRoutesByTo {
   '/blog/$slug': typeof BlogSlugRoute
   '/blog': typeof BlogIndexRoute
   '/admin/roles': typeof AuthenticatedAdminRolesRoute
+  '/payments/$id': typeof AuthenticatedPaymentsIdRoute
   '/api/cron/reconcile-payments': typeof ApiCronReconcilePaymentsRoute
   '/api/jupiter/execute': typeof ApiJupiterExecuteRoute
   '/api/jupiter/order': typeof ApiJupiterOrderRoute
@@ -283,8 +307,10 @@ export interface FileRoutesByTo {
   '/api/public/stables-webhook': typeof ApiPublicStablesWebhookRoute
   '/api/solana/health': typeof ApiSolanaHealthRoute
   '/api/solana/verify-tx': typeof ApiSolanaVerifyTxRoute
+  '/payments': typeof AuthenticatedPaymentsIndexRoute
   '/api/payments': typeof ApiPaymentsIndexRoute
   '/admin/payments/$id': typeof AuthenticatedAdminPaymentsIdRoute
+  '/admin/stables/$id': typeof AuthenticatedAdminStablesIdRoute
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
@@ -313,6 +339,7 @@ export interface FileRoutesById {
   '/blog/$slug': typeof BlogSlugRoute
   '/blog/': typeof BlogIndexRoute
   '/_authenticated/admin_/roles': typeof AuthenticatedAdminRolesRoute
+  '/_authenticated/payments/$id': typeof AuthenticatedPaymentsIdRoute
   '/api/cron/reconcile-payments': typeof ApiCronReconcilePaymentsRoute
   '/api/jupiter/execute': typeof ApiJupiterExecuteRoute
   '/api/jupiter/order': typeof ApiJupiterOrderRoute
@@ -320,8 +347,10 @@ export interface FileRoutesById {
   '/api/public/stables-webhook': typeof ApiPublicStablesWebhookRoute
   '/api/solana/health': typeof ApiSolanaHealthRoute
   '/api/solana/verify-tx': typeof ApiSolanaVerifyTxRoute
+  '/_authenticated/payments/': typeof AuthenticatedPaymentsIndexRoute
   '/api/payments/': typeof ApiPaymentsIndexRoute
   '/_authenticated/admin_/payments/$id': typeof AuthenticatedAdminPaymentsIdRoute
+  '/_authenticated/admin_/stables/$id': typeof AuthenticatedAdminStablesIdRoute
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
@@ -350,6 +379,7 @@ export interface FileRouteTypes {
     | '/blog/$slug'
     | '/blog/'
     | '/admin/roles'
+    | '/payments/$id'
     | '/api/cron/reconcile-payments'
     | '/api/jupiter/execute'
     | '/api/jupiter/order'
@@ -357,8 +387,10 @@ export interface FileRouteTypes {
     | '/api/public/stables-webhook'
     | '/api/solana/health'
     | '/api/solana/verify-tx'
+    | '/payments/'
     | '/api/payments/'
     | '/admin/payments/$id'
+    | '/admin/stables/$id'
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
@@ -385,6 +417,7 @@ export interface FileRouteTypes {
     | '/blog/$slug'
     | '/blog'
     | '/admin/roles'
+    | '/payments/$id'
     | '/api/cron/reconcile-payments'
     | '/api/jupiter/execute'
     | '/api/jupiter/order'
@@ -392,8 +425,10 @@ export interface FileRouteTypes {
     | '/api/public/stables-webhook'
     | '/api/solana/health'
     | '/api/solana/verify-tx'
+    | '/payments'
     | '/api/payments'
     | '/admin/payments/$id'
+    | '/admin/stables/$id'
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
@@ -421,6 +456,7 @@ export interface FileRouteTypes {
     | '/blog/$slug'
     | '/blog/'
     | '/_authenticated/admin_/roles'
+    | '/_authenticated/payments/$id'
     | '/api/cron/reconcile-payments'
     | '/api/jupiter/execute'
     | '/api/jupiter/order'
@@ -428,8 +464,10 @@ export interface FileRouteTypes {
     | '/api/public/stables-webhook'
     | '/api/solana/health'
     | '/api/solana/verify-tx'
+    | '/_authenticated/payments/'
     | '/api/payments/'
     | '/_authenticated/admin_/payments/$id'
+    | '/_authenticated/admin_/stables/$id'
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
@@ -611,6 +649,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminRolesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/payments/': {
+      id: '/_authenticated/payments/'
+      path: '/payments'
+      fullPath: '/payments/'
+      preLoaderRoute: typeof AuthenticatedPaymentsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/payments/$id': {
+      id: '/_authenticated/payments/$id'
+      path: '/payments/$id'
+      fullPath: '/payments/$id'
+      preLoaderRoute: typeof AuthenticatedPaymentsIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/api/cron/reconcile-payments': {
       id: '/api/cron/reconcile-payments'
       path: '/api/cron/reconcile-payments'
@@ -674,6 +726,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminPaymentsIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/admin_/stables/$id': {
+      id: '/_authenticated/admin_/stables/$id'
+      path: '/admin/stables/$id'
+      fullPath: '/admin/stables/$id'
+      preLoaderRoute: typeof AuthenticatedAdminStablesIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/api/payments/$paymentId/': {
       id: '/api/payments/$paymentId/'
       path: '/api/payments/$paymentId'
@@ -716,14 +775,20 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedPayRoute: typeof AuthenticatedPayRoute
   AuthenticatedAdminRolesRoute: typeof AuthenticatedAdminRolesRoute
+  AuthenticatedPaymentsIdRoute: typeof AuthenticatedPaymentsIdRoute
+  AuthenticatedPaymentsIndexRoute: typeof AuthenticatedPaymentsIndexRoute
   AuthenticatedAdminPaymentsIdRoute: typeof AuthenticatedAdminPaymentsIdRoute
+  AuthenticatedAdminStablesIdRoute: typeof AuthenticatedAdminStablesIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedPayRoute: AuthenticatedPayRoute,
   AuthenticatedAdminRolesRoute: AuthenticatedAdminRolesRoute,
+  AuthenticatedPaymentsIdRoute: AuthenticatedPaymentsIdRoute,
+  AuthenticatedPaymentsIndexRoute: AuthenticatedPaymentsIndexRoute,
   AuthenticatedAdminPaymentsIdRoute: AuthenticatedAdminPaymentsIdRoute,
+  AuthenticatedAdminStablesIdRoute: AuthenticatedAdminStablesIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

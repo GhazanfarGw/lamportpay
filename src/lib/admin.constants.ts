@@ -120,13 +120,14 @@ export const ENTITY_LABELS: Record<string, string> = {
 // ------------------------------------------------- live Stables payments
 
 export const STABLES_PAYMENT_COLUMNS =
-  "id, user_id, status, created_at, source_amount_minor, destination_currency, destination_country, destination_amount_minor, transfer_id, funding_signature, payer_wallet, failure_reason, travel_rule_reference, travel_rule_verification_url, travel_rule_expires_at, travel_rule_requested_at, travel_rule_resolved_at";
+  "id, user_id, status, created_at, source_currency, source_amount_minor, destination_currency, destination_country, destination_amount_minor, transfer_id, funding_signature, payer_wallet, failure_reason, travel_rule_reference, travel_rule_verification_url, travel_rule_expires_at, travel_rule_requested_at, travel_rule_resolved_at";
 
 export type AdminStablesPaymentRow = {
   id: string;
   user_id: string;
   status: string;
   created_at: string;
+  source_currency: string;
   source_amount_minor: number;
   destination_currency: string;
   destination_country: string;
@@ -140,6 +141,8 @@ export type AdminStablesPaymentRow = {
   travel_rule_expires_at: string | null;
   travel_rule_requested_at: string | null;
   travel_rule_resolved_at: string | null;
+  /** Set by the server: a deposit was rejected although funds reached Stables. */
+  deposit_issue?: boolean;
 };
 
 /** A stored Travel Rule request whose reference matched no payment. */

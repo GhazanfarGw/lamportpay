@@ -10,6 +10,8 @@ import { WalletStatusCard } from "./SolanaWallet";
 export type FundingPanelProps = {
   paymentId: string;
   amount: string;
+  /** Stablecoin label, "USDC" or "USDT". */
+  currency?: string;
   depositAddress: string;
   onFunded: () => void;
 };
@@ -43,11 +45,18 @@ async function confirmFunding(paymentId: string, signature: string, payer: strin
 }
 
 /**
- * Sends the exact deposit amount of USDC from the connected wallet to the
- * Stables deposit address. The transaction is built by the server from the
- * stored deposit instructions, so the amount and destination cannot drift.
+ * Sends the exact deposit amount of the payment's stablecoin (USDC or USDT)
+ * from the connected wallet to the Stables deposit address. The transaction is
+ * built by the server from the stored deposit instructions, so the amount,
+ * token and destination cannot drift.
  */
-export function FundingPanel({ paymentId, amount, depositAddress, onFunded }: FundingPanelProps) {
+export function FundingPanel({
+  paymentId,
+  amount,
+  currency = "USDC",
+  depositAddress,
+  onFunded,
+}: FundingPanelProps) {
   const { publicKey, connected, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const [busy, setBusy] = useState<"build" | "send" | "verify" | null>(null);
@@ -102,15 +111,19 @@ export function FundingPanel({ paymentId, amount, depositAddress, onFunded }: Fu
               ? "Approve in your wallet…"
               : busy === "verify"
                 ? "Verifying on Solana…"
-                : `Send ${amount} USDC`}
+                : `Send ${amount} ${currency}`}
         </button>
       ) : (
         <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
           <div className="flex items-start gap-2 text-sm">
             <TriangleAlert className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
             <span>
-              This sends <strong>{amount} USDC</strong> on Solana mainnet to the single-use Stables
-              deposit address. On-chain transfers cannot be reversed.
+              This sends{" "}
+              <strong>
+                {amount} {currency}
+              </strong>{" "}
+              on Solana mainnet to the single-use Stables deposit address. On-chain transfers cannot
+              be reversed.
             </span>
           </div>
           <div className="flex gap-2">

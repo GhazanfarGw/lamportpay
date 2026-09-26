@@ -39,16 +39,52 @@ export type PaymentView = {
     amount: string;
   } | null;
   funding: { signature: string; payer: string | null; verifiedAt: string | null } | null;
-  /** Wallet the USDC must come from (set when the funding transaction is prepared). */
+  /** Wallet the stablecoin must come from (set when the funding transaction is prepared). */
   payerWallet: string | null;
   /** What Stables actually paid out, once the transfer completed. */
   actualPayout: { currency: string; amountMinor: string; amount: string } | null;
-  beneficiary: unknown;
+  /** The user's own bank account, as stored: holder name, bank, masked number. */
+  beneficiary: BeneficiarySummary | null;
   purposeCode: string | null;
   failureReason: string | null;
   /** Stables is holding the transfer until the user proves they own the sending wallet. */
   travelRule: TravelRuleView | null;
+  /** When the payment reached COMPLETED (receipt date). */
+  completedAt: string | null;
+  /**
+   * The latest deposit we could not accept although funds reached the deposit
+   * address (wrong amount, or right amount from another wallet): the user must
+   * not send again. Null once a deposit is verified.
+   */
+  depositIssue: { received: string; expected: string; reason: string; at: string } | null;
+  /** An admin simulated the deposit (sandbox), so there is no Solana transaction. */
+  simulatedDeposit: boolean;
   events: PaymentEventView[];
+};
+
+/** `payments.beneficiary_summary`: never the full account number. */
+export type BeneficiarySummary = {
+  recipient_type: string;
+  /** Payouts go to the user's own account only (set on payments since this rule). */
+  own_account?: boolean;
+  account_holder_name: string;
+  bank_name: string;
+  bank_country: string;
+  account_kind?: "iban" | "account_number";
+  /** Masked: "••••1234". */
+  account: string | null;
+};
+
+/** One row of the payment history. */
+export type PaymentListItem = {
+  id: string;
+  status: PaymentState;
+  terminal: boolean;
+  createdAt: string;
+  source: { currency: string; amount: string };
+  destination: { currency: string; country: string; amount: string | null };
+  actualPayout: { currency: string; amount: string } | null;
+  accountHolder: string | null;
 };
 
 /**
@@ -108,6 +144,12 @@ export type KycStatus = {
   subStatus: string[];
   kycLink: string | null;
   kycLinkExpiresAt: string | null;
+  /**
+   * Name on the approved Stables customer record: the only account holder name
+   * payouts can use (own account only). Null until approved, or if Stables
+   * holds no name.
+   */
+  verifiedName: string | null;
 };
 
 /** Fees as stored in `payments.fees`. */
@@ -147,12 +189,73 @@ type EventRow = {
   from_status: string | null;
   to_status: string | null;
   source: string;
+  /** Used to derive fields below; never sent to the browser as is. */
+  detail?: unknown;
 };
 
 function amounts(minor: number | null, currency: string) {
   if (minor === null) return { amountMinor: null, amount: null };
   const value = BigInt(minor);
   return { amountMinor: value.toString(), amount: toMajor(value, currency) };
+}
+
+function isBeneficiarySummary(value: unknown): value is BeneficiarySummary {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as BeneficiarySummary).account_holder_name === "string"
+  );
+}
+
+/** Latest rejected deposit that still moved funds, unless a later one was verified. */
+function depositIssueOf(row: Row, events: EventRow[]): PaymentView["depositIssue"] {
+  if (row.funding_signature) return null;
+  for (const e of [...events].reverse()) {
+    if (e.kind !== "funding_rejected") continue;
+    const detail = (e.detail ?? {}) as Record<string, unknown>;
+    const received = typeof detail["received_minor"] === "string" ? detail["received_minor"] : "0";
+    if (!/^\d+$/.test(received) || BigInt(received) === 0n) continue;
+    const expected =
+      typeof detail["expected_minor"] === "string" && /^\d+$/.test(detail["expected_minor"])
+        ? BigInt(detail["expected_minor"])
+        : BigInt(row.deposit_amount_minor ?? 0);
+    return {
+      received: toMajor(BigInt(received), row.source_currency),
+      expected: toMajor(expected, row.source_currency),
+      reason: typeof detail["reason"] === "string" ? detail["reason"] : "",
+      at: e.created_at,
+    };
+  }
+  return null;
+}
+
+export function toPaymentListItem(row: Row): PaymentListItem {
+  const status = isPaymentState(row.status) ? row.status : "FAILED";
+  return {
+    id: row.id,
+    status,
+    terminal: isTerminal(status),
+    createdAt: row.created_at,
+    source: {
+      currency: row.source_currency,
+      amount: toMajor(BigInt(row.source_amount_minor), row.source_currency),
+    },
+    destination: {
+      currency: row.destination_currency,
+      country: row.destination_country,
+      amount: amounts(row.destination_amount_minor, row.destination_currency).amount,
+    },
+    actualPayout:
+      row.actual_payout_minor !== null && row.actual_payout_currency
+        ? {
+            currency: row.actual_payout_currency,
+            amount: toMajor(BigInt(row.actual_payout_minor), row.actual_payout_currency),
+          }
+        : null,
+    accountHolder: isBeneficiarySummary(row.beneficiary_summary)
+      ? row.beneficiary_summary.account_holder_name
+      : null,
+  };
 }
 
 export function toPaymentView(row: Row, events: EventRow[] = []): PaymentView {
@@ -213,10 +316,15 @@ export function toPaymentView(row: Row, events: EventRow[] = []): PaymentView {
             }),
           }
         : null,
-    beneficiary: row.beneficiary_summary,
+    beneficiary: isBeneficiarySummary(row.beneficiary_summary) ? row.beneficiary_summary : null,
     purposeCode: row.purpose_code,
     failureReason: row.failure_reason,
     travelRule: toTravelRuleView(row),
+    completedAt:
+      [...events].reverse().find((e) => e.kind === "transition" && e.to_status === "COMPLETED")
+        ?.created_at ?? null,
+    depositIssue: depositIssueOf(row, events),
+    simulatedDeposit: events.some((e) => e.kind === "sandbox_deposit_simulated"),
     events: events.map((e) => ({
       at: e.created_at,
       kind: e.kind,

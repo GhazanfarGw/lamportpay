@@ -78,10 +78,22 @@ export async function getPaymentByFundingSignature(signature: string): Promise<P
 export async function listPaymentEvents(paymentId: string) {
   const { data, error } = await supabaseAdmin
     .from("payment_events")
-    .select("created_at, kind, from_status, to_status, source")
+    .select("created_at, kind, from_status, to_status, source, detail")
     .eq("payment_id", paymentId)
     .order("id", { ascending: true });
   if (error) fail("Load payment events", error);
+  return data;
+}
+
+/** A user's payments, newest first. */
+export async function listPaymentsForUser(userId: string, limit: number): Promise<PaymentRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("payments")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) fail("Load payments", error);
   return data;
 }
 
@@ -269,15 +281,29 @@ export async function recordActualPayout(
 
 // -------------------------------------------------------------- travel rule
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type TravelRuleMatch = {
+  payment: PaymentRow;
+  matchedBy: "payment_id" | "transfer_id" | "funding_signature" | "travel_rule_reference";
+};
+
 /**
  * The payment a Travel Rule request refers to. Stables does not document
- * which ID `transaction_reference_id` is, so it is tried as the transfer ID,
- * the funding transaction signature, then as an earlier request's reference.
+ * which ID `transaction_reference_id` is, so it is tried as our own payment ID
+ * (sent as transfer metadata), the transfer ID, the funding transaction
+ * signature, then as an earlier request's reference.
  */
 export async function getPaymentByTravelRuleReference(
   reference: string,
-): Promise<PaymentRow | null> {
-  for (const column of ["transfer_id", "funding_signature", "travel_rule_reference"] as const) {
+): Promise<TravelRuleMatch | null> {
+  const columns = [
+    ...(UUID.test(reference) ? (["id"] as const) : []),
+    "transfer_id",
+    "funding_signature",
+    "travel_rule_reference",
+  ] as const;
+  for (const column of columns) {
     const { data, error } = await supabaseAdmin
       .from("payments")
       .select("*")
@@ -285,7 +311,7 @@ export async function getPaymentByTravelRuleReference(
       .order("created_at", { ascending: false })
       .limit(1);
     if (error) fail("Load payment by Travel Rule reference", error);
-    if (data[0]) return data[0];
+    if (data[0]) return { payment: data[0], matchedBy: column === "id" ? "payment_id" : column };
   }
   return null;
 }

@@ -31,6 +31,8 @@ export function customer(
     external_customer_id: externalId,
     customer_type: "individual",
     email: "user@example.com",
+    first_name: "Asha",
+    last_name: "Rao",
     verification_levels: [{ level: "individual_base", status }],
     entitlements: [
       { name: "base_payout", status: status === "approved" ? "approved" : "submitted" },

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { toPaymentView } from "@/lib/payments/view";
 import { logAdminActions } from "./admin.audit.server";
 import {
   ADMIN_KYC_STATUSES,
@@ -24,6 +25,83 @@ import {
   type PaymentStatus,
   type QuoteStatus,
 } from "./admin.constants";
+
+async function requireAdmin(context: {
+  supabase: { rpc: (fn: "has_role", args: { _user_id: string; _role: "admin" }) => unknown };
+  userId: string;
+}) {
+  const { data: isAdmin, error } = (await context.supabase.rpc("has_role", {
+    _user_id: context.userId,
+    _role: "admin",
+  })) as { data: boolean | null; error: unknown };
+  if (error) throw new Error("Could not verify admin access.");
+  if (!isAdmin) throw new Error("Admin role required.");
+}
+
+/**
+ * One live Stables payment for admins: the same view (and receipt) the user
+ * sees, plus the owner, the full timeline with details, and whether the
+ * Stables connection is the sandbox (deposit simulation is offered there only).
+ */
+export const getStablesPaymentDetailAdmin = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).strict().parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    await requireAdmin(context);
+
+    const [paymentResult, eventsResult] = await Promise.all([
+      supabase.from("payments").select("*").eq("id", data.id).maybeSingle(),
+      supabase
+        .from("payment_events")
+        .select("created_at, kind, from_status, to_status, source, detail")
+        .eq("payment_id", data.id)
+        .order("id", { ascending: true }),
+    ]);
+    if (paymentResult.error) throw new Error(paymentResult.error.message);
+    if (eventsResult.error) throw new Error(eventsResult.error.message);
+    const payment = paymentResult.data;
+    if (!payment) throw new Error("Payment not found.");
+    const events = eventsResult.data ?? [];
+
+    const { getStablesConfig } = await import("@/lib/stables/config.server");
+    const config = getStablesConfig();
+    return {
+      payment: toPaymentView(payment, events),
+      userId: payment.user_id,
+      timeline: events.map((e) => ({
+        at: e.created_at,
+        kind: e.kind,
+        from: e.from_status,
+        to: e.to_status,
+        source: e.source,
+        detail: e.detail === null ? null : JSON.stringify(e.detail),
+      })),
+      stablesEnvironment: config.configured ? config.environment : ("unconfigured" as const),
+    };
+  });
+
+/**
+ * SANDBOX ONLY: simulate the incoming deposit of a payment's Stables transfer
+ * (POST /transfers/{id}/sandbox/simulate-deposit). Admins only; the service
+ * refuses with a live (sti_live_) key or a production URL.
+ */
+export const simulateSandboxDepositAdmin = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).strict().parse(input))
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
+    const { simulateSandboxDeposit, PaymentError } = await import("@/lib/payments/service.server");
+    try {
+      return await simulateSandboxDeposit(data.id, {
+        id: context.userId,
+        email: (context.claims as { email?: string } | null)?.email ?? null,
+      });
+    } catch (e) {
+      if (e instanceof PaymentError) throw new Error(e.message);
+      throw e;
+    }
+  });
 
 /**
  * Live Stables payments for operations: the latest payments, every payment
@@ -50,7 +128,7 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
       };
     }
 
-    const [recent, open, unmatched] = await Promise.all([
+    const [recent, open, unmatched, rejectedDeposits] = await Promise.all([
       supabase
         .from("payments")
         .select(STABLES_PAYMENT_COLUMNS)
@@ -70,16 +148,36 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
         .is("processed_at", null)
         .order("received_at", { ascending: false })
         .limit(50),
+      // Deposits we rejected although funds reached the deposit address.
+      supabase
+        .from("payment_events")
+        .select("payment_id, detail")
+        .eq("kind", "funding_rejected")
+        .order("id", { ascending: false })
+        .limit(200),
     ]);
-    for (const result of [recent, open, unmatched]) {
+    for (const result of [recent, open, unmatched, rejectedDeposits]) {
       if (result.error) throw new Error(result.error.message);
     }
 
     const text = (value: unknown) => (typeof value === "string" ? value : null);
+    const fundsMoved = new Set(
+      (rejectedDeposits.data ?? [])
+        .filter((e) => {
+          const received = text((e.detail as Record<string, unknown> | null)?.["received_minor"]);
+          return received !== null && /^\d+$/.test(received) && BigInt(received) > 0n;
+        })
+        .map((e) => e.payment_id),
+    );
+    const withIssue = (rows: unknown[] | null) =>
+      ((rows ?? []) as AdminStablesPaymentRow[]).map((row) => ({
+        ...row,
+        deposit_issue: !row.funding_signature && fundsMoved.has(row.id),
+      }));
     return {
       isAdmin: true,
-      payments: (recent.data ?? []) as unknown as AdminStablesPaymentRow[],
-      travelRuleOpen: (open.data ?? []) as unknown as AdminStablesPaymentRow[],
+      payments: withIssue(recent.data),
+      travelRuleOpen: withIssue(open.data),
       travelRuleUnmatched: (unmatched.data ?? []).map((row): AdminUnmatchedTravelRule => {
         const object = ((row.payload as { event_object?: unknown } | null)?.event_object ??
           {}) as Record<string, unknown>;

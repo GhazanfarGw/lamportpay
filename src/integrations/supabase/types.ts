@@ -391,8 +391,10 @@ export type Database = {
         Row: {
           base_payout_status: string | null
           created_at: string
+          first_name: string | null
           kyc_link: string | null
           kyc_link_expires_at: string | null
+          last_name: string | null
           stables_customer_id: string
           updated_at: string
           user_id: string
@@ -402,8 +404,10 @@ export type Database = {
         Insert: {
           base_payout_status?: string | null
           created_at?: string
+          first_name?: string | null
           kyc_link?: string | null
           kyc_link_expires_at?: string | null
+          last_name?: string | null
           stables_customer_id: string
           updated_at?: string
           user_id: string
@@ -413,8 +417,10 @@ export type Database = {
         Update: {
           base_payout_status?: string | null
           created_at?: string
+          first_name?: string | null
           kyc_link?: string | null
           kyc_link_expires_at?: string | null
+          last_name?: string | null
           stables_customer_id?: string
           updated_at?: string
           user_id?: string

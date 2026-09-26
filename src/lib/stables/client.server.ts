@@ -16,6 +16,7 @@ import type {
   StablesCustomer,
   StablesCustomerList,
   StablesQuote,
+  SimulatedDeposit,
   StablesTransfer,
   StablesVerificationLink,
   ValidatePaymentMethodRequest,
@@ -205,5 +206,20 @@ export function validatePaymentMethod(config: Configured, body: ValidatePaymentM
       body,
       idempotencyKey: randomUUID(),
     },
+  );
+}
+
+/**
+ * SANDBOX ONLY: have Stables act as if the customer's crypto deposit arrived,
+ * so an off-ramp transfer can progress to payout without an on-chain payment.
+ * The endpoint takes no options (it cannot simulate a wrong amount). Callers
+ * pass a key per transfer so a repeated click replays the first result.
+ */
+export function simulateTransferDeposit(config: Configured, transferId: string, key: string) {
+  return request<SimulatedDeposit>(
+    config,
+    "POST",
+    `/api/v1/transfers/${encodeURIComponent(transferId)}/sandbox/simulate-deposit`,
+    { body: {}, idempotencyKey: key },
   );
 }

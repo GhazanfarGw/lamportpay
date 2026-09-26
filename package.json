@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "tunnel": "cloudflared tunnel --url http://localhost:8080 --http-host-header localhost:8080",
-    "webhook:send": "node scripts/stables-webhook.mjs"
+    "webhook:send": "node scripts/stables-webhook.mjs",
+    "reconcile": "node scripts/reconcile-payments.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

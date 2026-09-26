@@ -2,10 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { getPaymentLimits } from "@/lib/payments/limits.server";
 import { getStablesConfig, getStablesWebhookSecret } from "@/lib/stables/config.server";
+import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 
-function paymentLimitsUsdc(): { min: string; max: string } | null {
+function paymentLimits(currency: PaymentCurrency): { min: string; max: string } | null {
   try {
-    const { min, max } = getPaymentLimits();
+    const { min, max } = getPaymentLimits(currency);
     return { min, max };
   } catch {
     return null; // Misconfigured; payment creation reports it.
@@ -42,7 +43,7 @@ export const Route = createFileRoute("/api/integration-status")({
               },
               {
                 name: "Stables",
-                role: "KYC, USDC → local currency conversion and payout",
+                role: "KYC, USDC/USDT → local currency conversion and payout",
                 configured: stablesConfigured,
                 mode: stablesMode,
                 note: !stables.configured
@@ -73,7 +74,10 @@ export const Route = createFileRoute("/api/integration-status")({
               kycEnabled: stablesConfigured,
               webhookVerification: Boolean(getStablesWebhookSecret()),
               swapLimits: "0.001 – 0.01 SOL",
-              paymentLimitsUsdc: paymentLimitsUsdc(),
+              paymentLimitsUsdc: paymentLimits("usdc"),
+              paymentLimits: Object.fromEntries(
+                PAYMENT_CURRENCIES.map((currency) => [currency, paymentLimits(currency)]),
+              ),
               outputDestination: "connected wallet only",
             },
           },

@@ -1,189 +1,204 @@
 # Stables sandbox runbook
 
-How to receive Stables sandbox webhooks on a local dev server and exercise every event LamportPay
-subscribes to, including the Travel Rule wallet-verification step.
+The full payment flow against the Stables sandbox, run locally, with what to check at each step:
 
-## Prerequisites
+customer → KYC → quote → transfer → simulate deposit → webhooks → COMPLETED → receipt, plus the
+Travel Rule step.
 
-- `.env.local` (or `.env`) has a sandbox `STABLES_API_KEY` (`sti_test_…`) and
-  `STABLES_API_URL=https://api.sandbox.stables.money`.
-- Supabase points at the **dev** project, with every migration in `supabase/migrations` applied,
-  including `20260926170000_travel_rule.sql`. Without it the payment routes and the admin
-  "Stables payments" section fail with "column … does not exist".
-- `cloudflared` is installed (`winget install --id Cloudflare.cloudflared`; open a new terminal
-  afterwards so it is on `PATH`).
+No real money moves. Sandbox deposit addresses are not real, so sending from a wallet is
+disabled; an admin simulates the deposit instead.
 
-## 1. Expose the dev server
+## 0. One-time setup
 
-```sh
-npm run dev      # http://localhost:8080
-npm run tunnel   # prints https://<random>.trycloudflare.com
-```
-
-`npm run tunnel` runs `cloudflared tunnel --url http://localhost:8080 --http-host-header localhost:8080`.
-The host-header flag is required: the Vite dev server answers any other `Host` with
-`403 Blocked request. This host is not allowed.`
-
-Quick tunnels are ephemeral. The URL changes every time `cloudflared` restarts, so update the
-endpoint in the Stables dashboard after each restart.
-
-Check the route is reachable (expect **401**, not 404):
-
-```sh
-curl -i -X POST https://<random>.trycloudflare.com/api/public/stables-webhook
-# HTTP/2 401 {"error":"Missing svix signature headers."}
-```
-
-## 2. Register the endpoint
-
-1. Stables Developer Dashboard → **Settings → Webhooks → Add endpoint**.
-2. URL: `https://<random>.trycloudflare.com/api/public/stables-webhook`
-3. Events:
+1. **Env** (`.env`, or `.env.local`, which overrides it):
+   - `STABLES_API_KEY=sti_test_…`
+   - `STABLES_API_URL=https://api.sandbox.stables.money`
+   - `STABLES_WEBHOOK_SECRET=whsec_…`
+   - `CRON_SECRET=` a long random string
+   - `SUPABASE_*` pointing at the **dev** project
+   - `PAYMENT_MIN_USDC`, `PAYMENT_MAX_USDC`, `PAYMENT_MIN_USDT`, `PAYMENT_MAX_USDT` (defaults
+     100 and 1000000)
+2. **Database:** every migration in `supabase/migrations` applied to the dev project (the latest
+   is `20260926200000_usdt_source.sql`).
+3. **Admin role:** your user has a row in `user_roles` with `role = 'admin'` (needed for step 5
+   and the admin checks).
+4. **Dev server and tunnel:** `cloudflared` installed (`winget install --id Cloudflare.cloudflared`,
+   then a new terminal).
+   ```sh
+   npm run dev      # http://localhost:8080; restart it after any .env change
+   npm run tunnel   # prints https://<random>.trycloudflare.com (changes on every restart)
+   ```
+   Check: `curl -i -X POST https://<random>.trycloudflare.com/api/public/stables-webhook` → **401**
+   (not 404, not 403).
+5. **Webhook endpoint:** Stables dashboard → Settings → Webhooks → add
+   `https://<random>.trycloudflare.com/api/public/stables-webhook` with these events:
    - `customer.created`
    - `customer.updated`
    - `kyc_link.updated.status_transitioned`
    - `transfer.updated.status_transitioned`
    - `travel_rule.wallet_verification_required`
-4. Copy the endpoint's signing secret (`whsec_…`) into `.env.local`:
-   ```
-   STABLES_WEBHOOK_SECRET=whsec_…
-   ```
-   `.env.local` overrides `.env`. Never commit it (`*.local` and `.env.*` are git-ignored).
-5. **Restart `npm run dev`**: env files are read only at startup.
 
-What the endpoint answers:
+   Its `whsec_…` secret must equal `STABLES_WEBHOOK_SECRET`. Use the endpoint's **Testing** tab:
+   every event should show **200** in the delivery log.
 
-| Response | Meaning                                                                  |
-| -------- | ------------------------------------------------------------------------ |
-| 200      | Stored (by `event_id`) and processed after the response. Unknown types too. |
-| 401      | No Svix headers, bad signature, or timestamp more than 5 minutes off.     |
-| 503      | Signed, but `STABLES_WEBHOOK_SECRET` is not loaded. Stables retries.      |
-| 500      | The event could not be stored. Stables retries.                          |
-
-## 3. Smoke test with the dashboard's Testing tab
-
-Send each subscribed event type from the endpoint's **Testing** tab. Every delivery should show
-**200** in the dashboard's delivery log. The example payloads use IDs LamportPay does not know,
-so they are stored and acknowledged, then handled as follows:
-
-| Event                                      | Stored outcome (`stables_webhook_events`)                        |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| `customer.created` / `customer.updated`    | processed, "Not a LamportPay customer."                            |
-| `kyc_link.updated.status_transitioned`     | unprocessed, "Unknown customer." (retried by reconciliation)       |
-| `transfer.updated.status_transitioned`     | unprocessed, "No payment for this transfer yet."                   |
-| `travel_rule.wallet_verification_required` | unprocessed, "No payment matches reference txn-ref-8842."          |
-
-The Travel Rule example also appears in **/admin → Stables payments → Requests with no matching
-payment**.
+Useful SQL (Supabase SQL editor, dev project):
 
 ```sql
-select event_type, event_object_id, processed_at, process_error, received_at
+-- Latest payments
+select id, status, source_currency, source_amount_minor, transfer_id,
+       travel_rule_requested_at, travel_rule_resolved_at, actual_payout_minor
+from payments order by created_at desc limit 5;
+
+-- One payment's timeline
+select created_at, kind, from_status, to_status, source, detail
+from payment_events where payment_id = '<payment id>' order by id;
+
+-- Latest webhook deliveries
+select received_at, event_type, event_object_id, processed_at, process_error
 from stables_webhook_events order by received_at desc limit 20;
 ```
 
-## 4. Real sandbox flow
+## 1. Customer and KYC
 
-In `/pay`: create a payment, verify with Stables (sandbox KYC), get a quote, and enter the
-recipient's bank details. This creates a real sandbox transfer (`payments.transfer_id`). Funding
-is disabled against the sandbox, because sandbox deposit addresses are not real.
+**Do:** sign in, open `/pay`, choose an amount (at least 100), USDC or USDT, a country and a
+currency, then **Start payment**. In the identity card, **Verify with Stables** and complete the
+sandbox KYC.
 
-Customer and KYC webhooks from these steps arrive for real. `customer.updated` re-reads the
-customer, which is how a `base_payout` entitlement granted after KYC approval moves waiting
-payments to `KYC_APPROVED`.
+**Check:**
+- **New payment:** status `PAYMENT_CREATED`. A preview quote priced the destination. If Stables
+  refuses the destination you see "… are not supported" plus "Stables says: …"; if it refuses the
+  amount, "Stables can't accept …" plus its reason.
+- **Customer and webhooks:** a `stables_customers` row exists. Deliveries of `customer.created`,
+  `customer.updated` and `kyc_link.updated.status_transitioned` arrive, each with `processed_at`
+  set.
+- **Approval:** after approval the payment is `KYC_APPROVED`. The identity card reads "Verified by
+  Stables as <name>", and `stables_customers.first_name` / `last_name` are set.
+- **No name:** if Stables holds no name, the bank form will refuse to continue. That is a
+  question for Stables (see the end).
 
-## 5. Travel Rule wallet verification
+## 2. Quote
 
-### What it is
+**Do:** **Get quote**.
 
-Stables can hold a transaction until the customer proves they own the self-custody wallet
-involved (our users pay from Phantom or Solflare). The webhook carries a `verification_url`, an
-`expires_at`, and a `transaction_reference_id`.
+**Check:**
+- **Status:** `QUOTED`, with a countdown ("Quote valid for m:ss").
+- **Rate and fees:** the rate reads `1 USDC = …` (or `1 USDT = …`), and the fees are listed.
+- **Timeline:** a `transition` to `QUOTED` with the `quote_id`.
 
-LamportPay stores these on the payment. It does not add a payment state: the Stables transfer
-state stays authoritative, and the hold can overlap `AWAITING_FUNDS_COLLECTION` or
-`COMPLIANCE_HOLD`.
+## 3. Transfer to your own account
 
-- **User:** the payment page shows an "Action needed — verify your wallet" badge and a step card
-  with the expiry countdown. The card has a button that opens Stables' page and warns never to
-  enter a seed phrase. The page polls and updates by itself.
-- **Admin:** /admin → Stables payments → "Travel Rule: waiting on wallet verification", with the
-  reference, expiry, sending wallet, and a copy-link button.
-- **Lifted:** Stables sends no "verified" event. The hold counts as lifted when a later transfer
-  state (by Stables' event time) moves the transfer on: anything but `COMPLIANCE_HOLD`, `FAILED`,
-  `CANCELLED` or `EXPIRED`. A payment that ends while the hold is open shows as "Ended
-  unverified".
-- **Matching:** `transaction_reference_id` is matched against the transfer ID, then the funding
-  transaction signature, then earlier requests. Unmatched requests stay unprocessed and are
-  replayed when a transfer or funding signature with that ID is stored. They are also retried by
-  reconciliation for 3 days.
+**Do:** the account holder field shows your verified name and cannot be edited. Enter the bank
+name and the account number or IBAN, then **Review payment**. Check the summary, then **Confirm
+and create transfer**.
 
-### Exercise it
+**Check:**
+- **Form:** it shows "Payouts can only be sent to a bank account in your own name." Date of birth
+  and address appear only if Stables asks for them.
+- **Summary:** it lists your name, the payment ID, the amount sent, the rate, the LamportPay fee
+  (Stables' `integrator_fee`, "None" if not configured), each Stables fee, the amount your bank
+  receives, the currency, the account holder, the **full** account number, the bank and the
+  country.
+- **After confirming:** status `AWAITING_FUNDS_COLLECTION` (or `CREATED`), with a deposit address
+  for the chosen coin.
+- **Database:** `payments.transfer_id` is set. `beneficiary_summary` has
+  `"own_account": true`, your name, and the account masked (`••••1234`).
+- **Refusals:** a Stables refusal of the amount (its limits are checked again at this step) shows
+  "Stables can't accept …" plus its reason. A refusal of the bank details takes you back to the
+  form with the fields marked.
 
-The sandbox will not raise a Travel Rule hold by itself, because no real deposit arrives from a
-self-custody wallet. Send signed events locally instead. `npm run webhook:send` signs with
-`STABLES_WEBHOOK_SECRET` from `.env.local` and posts to `http://localhost:8080` (override with
-`--url`).
+## 4. Simulate the deposit (admin)
 
-Take `<transfer_id>` from /admin → Stables payments (shown under each payment), or from
-`payments.transfer_id`.
+**Do:** open `/admin` → Stables payments → click the payment → **Simulate deposit**.
+
+**Check:**
+- **Toast:** "Deposit simulated (<status>)". The timeline shows `sandbox deposit simulated` with
+  the `simulation_id`.
+- **Guards:** the button only shows in the sandbox and only while the transfer waits for funds.
+  The server refuses a live (`sti_live_`) key or a production URL even if called directly.
+- **Repeats:** a second click replays the same simulation; one key per transfer.
+
+## 5. Webhooks → COMPLETED
+
+**Check:**
+- **Webhooks:** `transfer.updated.status_transitioned` deliveries arrive. The payment moves
+  forward (`FUNDS_COLLECTED` → … → `COMPLETED`) and each step appears on `/pay` within about 5
+  seconds.
+- **Missed webhooks:** if a step seems stuck, `npm run reconcile` pulls the latest transfer status
+  from Stables and replays stored deliveries that never applied. It prints a report.
+- **Settled payout:** on `COMPLETED`, `actual_payout_minor` / `_currency` are recorded (from the
+  event or `GET /transfers/{id}`), and the timeline shows `payout settled`.
+- **Sandbox stops early:** if the sandbox never reaches `COMPLETED` after a simulated deposit,
+  that is sandbox behaviour to raise with Stables. To see the receipt locally anyway, run
+  `npm run webhook:send -- transfer <transfer_id> COMPLETED` (it moves the local record only).
+
+## 6. Travel Rule step
+
+The sandbox does not raise a Travel Rule hold by itself. Send one locally with `npm run
+webhook:send` (signed with `STABLES_WEBHOOK_SECRET`) while the payment waits for funds, before
+step 4:
 
 ```sh
-# 1. Hold: the payment page shows the verification step; admin lists it as pending.
 npm run webhook:send -- travel-rule <transfer_id>
-
-# 2. Release: the step disappears, the timeline shows "Wallet verification done", admin shows "Hold lifted".
-npm run webhook:send -- transfer <transfer_id> FUNDS_COLLECTED
 ```
 
-Other cases:
+**Check:**
+- **User side:** `/pay` shows "Action needed — verify your wallet" and the verification card with
+  a countdown and the **Verify wallet with Stables** button.
+- **Admin side:** `/admin` lists the payment under "Travel Rule: waiting on wallet verification".
+- **Logs:** the dev server logs `{"event":"travel_rule_reference", "transaction_reference_id":
+  …, "matched_by": "transfer_id", …}`. **Keep this line from the first real event:** it shows
+  which ID Stables uses.
+- **Release:** after the next transfer step (step 4/5, or `npm run webhook:send -- transfer
+  <transfer_id> FUNDS_COLLECTED`), the card disappears. The timeline shows "Wallet verification
+  done", and admin shows "Hold lifted".
+- **Other cases:**
+  - `--expires-in 1`: after a minute the card says the link expired.
+  - `travel-rule no-such-reference`: listed under "Requests with no matching payment".
 
-```sh
-# Expiry: after a minute the card says the link expired and points to /contact.
-npm run webhook:send -- travel-rule <transfer_id> --expires-in 1
+## 7. Receipt
 
-# A new request after a lifted one re-opens the step.
-npm run webhook:send -- travel-rule <transfer_id>
+**Do:** on the completed payment, **View receipt**, or `/payments` → Receipt.
 
-# Unmatched: listed under "Requests with no matching payment".
-npm run webhook:send -- travel-rule no-such-reference
+**Check:**
+- **Contents:** the same rows as the summary, plus the status, created and completed times, the
+  Stables transfer ID, and the Solana transaction. For a simulated deposit that shows "Simulated
+  deposit (Stables sandbox)". The account number is masked (`••••1234`); the full number is never
+  stored.
+- **History:** `/payments` lists the payment with a Receipt link.
+- **Admin:** `/admin/stables/<payment id>` shows the same receipt plus the owner, the wallet, and
+  the timeline with details.
+- **Print:** "Print / save as PDF" hides the page chrome.
 
-# A link that is not https is never shown; the user is told to contact us.
-npm run webhook:send -- travel-rule <transfer_id> --verification-url http://insecure.example
+## 8. Other checks
 
-# Other subscribed and unknown types.
-npm run webhook:send -- customer-updated <stables_customer_id>
-npm run webhook:send -- kyc <stables_customer_id> VERIFICATION_APPROVED
-npm run webhook:send -- unknown   # 200, stored as "Ignored virtual_account.created."
-```
-
-A `transfer` event moves the stored payment through the real state machine. Use it only on
-sandbox payments.
-
-To retry unprocessed deliveries now instead of waiting for the cron:
-
-```sh
-curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:8080/api/cron/reconcile-payments
-```
-
-### Confirm with Stables before production
-
-- Which ID is `transaction_reference_id`: the transfer ID, the deposit transaction hash, or
-  something else? The docs example (`txn-ref-8842`) does not say.
-- Does the hold apply to off-ramp **deposits** from self-custody wallets? The docs say "only
-  relevant for self-custody withdrawals".
-- What transfer status does a held transfer show (`AWAITING_FUNDS_COLLECTION`, `COMPLIANCE_HOLD`)?
-  Is there an event when verification completes or fails?
-- Does an expired link get re-issued automatically (a new event), or on request?
-- Can the verification page be embedded (iframe), or completed via API? Today it opens in a new
-  tab, like hosted KYC.
+- **Our limits:**
+  - 99 USDC is refused: "Payments must be between 100 and 1,000,000 USDC."
+  - Change `PAYMENT_MIN_USDT` in `.env` and restart: the USDT limit follows.
+- **Unknown events:** `npm run webhook:send -- unknown` gives 200, stored as "Ignored
+  virtual_account.created."
+- **Wrong amounts:** the sandbox cannot produce them. See `docs/wrong-amount-deposits.md`.
 
 ## Troubleshooting
 
-| Symptom                               | Fix                                                                           |
-| ------------------------------------- | ----------------------------------------------------------------------------- |
-| 403 "This host is not allowed"        | Start the tunnel with `npm run tunnel` (it sets the host header).              |
-| 404                                   | Wrong path: it is `/api/public/stables-webhook`.                              |
-| 401 "Invalid webhook signature."      | Secret does not match this endpoint (copied from another endpoint, or rotated). |
-| 401 "…outside the allowed window."    | Local clock is more than 5 minutes off.                                      |
-| 503                                   | Secret not loaded: set it in `.env.local` and restart `npm run dev`.          |
-| Delivery log shows timeouts           | The tunnel stopped or its URL changed: restart it and update the endpoint.     |
+| Symptom | Fix |
+| --- | --- |
+| 403 "This host is not allowed" | Start the tunnel with `npm run tunnel` (it sets the host header). |
+| 404 on the webhook URL | The path is `/api/public/stables-webhook`. |
+| 401 "Invalid webhook signature." | The secret is not this endpoint's (copied from another endpoint, or rotated). |
+| 401 "…outside the allowed window." | The local clock is more than 5 minutes off. |
+| 503 on webhooks | The secret is not loaded: set it and restart `npm run dev`. |
+| `npm run reconcile` → 401 | The server's `CRON_SECRET` differs: restart `npm run dev` after editing `.env`. |
+| Bank form: "no name from your verified profile" | Stables' customer record has no first/last name; ask Stables. |
+| Deliveries time out | The tunnel stopped or its URL changed: restart it and update the endpoint. |
+
+## Questions for Stables
+
+- How does the customer record get `first_name` / `last_name`, and are they the names verified
+  during KYC? We lock payouts to that name, as the docs require.
+- Can customers fund off-ramp transfers with **USDT on Solana**?
+- Travel Rule:
+  - Which ID is `transaction_reference_id`?
+  - Does the hold apply to off-ramp deposits from self-custody wallets?
+  - Is there a "verified" event?
+- After a simulated deposit, does the sandbox run the transfer to `COMPLETED`?
+- Wrong-amount deposits: see `docs/wrong-amount-deposits.md`.

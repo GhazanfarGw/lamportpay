@@ -18,6 +18,9 @@ export interface StablesCustomer {
   external_customer_id: string | null;
   customer_type: "individual" | "business";
   email: string;
+  /** Name on the customer record; payout account holders must match it. */
+  first_name?: string | null;
+  last_name?: string | null;
   entitlements?: Array<{ name: string; status: EntitlementStatus }>;
   verification_levels: Array<{ level: string; status: VerificationStatus; sub_status?: string[] }>;
   status?: string;
@@ -157,6 +160,16 @@ export interface StablesTransfer {
   exchange_rate?: number | null;
   /** Final settled amount, populated once the transfer completes. */
   actual_payout?: { amount: string; amount_minor?: number | string; currency: string } | null;
+  /** Echo of the metadata sent at creation (LamportPay sends `payment_id`). */
+  metadata?: Record<string, string> | null;
+}
+
+/** POST /transfers/{id}/sandbox/simulate-deposit (sandbox only, answers 202). */
+export interface SimulatedDeposit {
+  transfer_id: string;
+  simulation_id: string;
+  scenario: string;
+  deposit_status: string;
 }
 
 /**
