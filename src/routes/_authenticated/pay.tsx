@@ -15,7 +15,11 @@ import {
 
 import { SiteLayout } from "@/components/site/Layout";
 import { PaymentReceipt } from "@/components/site/PaymentReceipt";
-import { FundingPanelIsland, SwapPanelIsland } from "@/components/site/wallet/WalletIsland";
+import {
+  FundingPanelIsland,
+  PaymentSwapIsland,
+  WalletKeyIsland,
+} from "@/components/site/wallet/WalletIsland";
 import { formatMinor } from "@/lib/money";
 import { PaymentApiError, paymentApi, type FieldIssue } from "@/lib/payments/api-client";
 import type { KycStatus, PaymentView } from "@/lib/payments/view";
@@ -29,7 +33,7 @@ import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 
 const OWN_ACCOUNT_MESSAGE = "Payouts can only be sent to a bank account in your own name.";
 
-type Limits = Partial<Record<PaymentCurrency, { min: string; max: string } | null>>;
+type Limits = Partial<Record<PaymentCurrency, { min: string; max: string | null } | null>>;
 
 /** "1000000" → "1,000,000". */
 function grouped(major: string) {
@@ -114,12 +118,19 @@ function PayPage() {
       const res = await fetch("/api/integration-status");
       return (await res.json()) as {
         providers: Array<{ name: string; mode: string }>;
-        guards?: { paymentLimits?: Limits };
+        guards?: {
+          paymentLimits?: Limits;
+          paymentCurrencies?: PaymentCurrency[];
+          platformFeeBps?: number | null;
+        };
       };
     },
   });
   const stablesMode = status.data?.providers.find((p) => p.name === "Stables")?.mode;
   const limits = status.data?.guards?.paymentLimits ?? {};
+  const coins = status.data?.guards?.paymentCurrencies ?? [...PAYMENT_CURRENCIES];
+  const feeBps = status.data?.guards?.platformFeeBps ?? null;
+  const coinText = coins.map((c) => c.toUpperCase()).join(" / ");
 
   return (
     <SiteLayout>
@@ -127,7 +138,7 @@ function PayPage() {
         <div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-primary">
-              USDC / USDT → local currency
+              {coinText} → local currency
             </div>
             <Link to="/payments" className="text-sm text-primary hover:underline">
               Payment history
@@ -135,9 +146,10 @@ function PayPage() {
           </div>
           <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mt-2">Send a payment</h1>
           <p className="text-muted-foreground mt-2">
-            You send USDC or USDT from your own wallet straight to a single-use deposit address from
-            Stables, our licensed payout partner. Stables verifies your identity, converts, and pays
-            out to your own bank account. LamportPay never holds your funds.
+            You send {coins.map((c) => c.toUpperCase()).join(" or ")} from your own wallet straight
+            to a single-use deposit address from Stables, our licensed payout partner. Stables
+            verifies your identity, converts, and pays out to your own bank account. LamportPay
+            never holds your funds.
           </p>
         </div>
 
@@ -154,7 +166,11 @@ function PayPage() {
         )}
 
         <KycCard />
-        {payment ? <PaymentPanel paymentId={payment} /> : <NewPaymentForm limits={limits} />}
+        {payment ? (
+          <PaymentPanel paymentId={payment} stablesMode={stablesMode} />
+        ) : (
+          <NewPaymentForm limits={limits} coins={coins} feeBps={feeBps} />
+        )}
       </div>
     </SiteLayout>
   );
@@ -236,15 +252,17 @@ function KycCard() {
             <>
               {data.status === "not_started" && (
                 <div className="grid sm:grid-cols-2 gap-3">
-                  <Field label="First name (optional)">
+                  <Field label="First name (as on your ID)">
                     <input
+                      required
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       className={INPUT}
                     />
                   </Field>
-                  <Field label="Last name (optional)">
+                  <Field label="Last name (as on your ID)">
                     <input
+                      required
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       className={INPUT}
@@ -255,7 +273,10 @@ function KycCard() {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => start.mutate()}
-                  disabled={start.isPending}
+                  disabled={
+                    start.isPending ||
+                    (data.status === "not_started" && (!firstName.trim() || !lastName.trim()))
+                  }
                   className={PRIMARY}
                 >
                   {start.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -288,6 +309,19 @@ function KycCard() {
 const NON_COUNTRY_REGIONS = new Set(["EU", "EZ", "UN", "QO", "XA", "XB", "ZZ"]);
 
 /**
+ * Whether `code` is the current code for its region. Retired or alias codes
+ * (UK → GB, FX → FR, DD → DE, ZR → CD…) share a display name with the current
+ * one, and Stables refuses them.
+ */
+function isCanonicalRegion(code: string) {
+  try {
+    return Intl.getCanonicalLocales(`und-${code}`)[0] === `und-${code}`;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Every country and ISO currency the browser knows. LamportPay keeps no list of
  * corridors: Stables prices the choice and says whether it can pay out there.
  */
@@ -299,7 +333,9 @@ function useDestinationOptions() {
       for (let b = 65; b <= 90; b++) {
         const code = String.fromCharCode(a, b);
         const name = regionNames.of(code);
-        if (name && name !== code && !NON_COUNTRY_REGIONS.has(code)) countries.push({ code, name });
+        if (name && name !== code && !NON_COUNTRY_REGIONS.has(code) && isCanonicalRegion(code)) {
+          countries.push({ code, name });
+        }
       }
     }
     countries.sort((x, y) => x.name.localeCompare(y.name));
@@ -313,22 +349,45 @@ function useDestinationOptions() {
   }, []);
 }
 
-function NewPaymentForm({ limits: allLimits }: { limits: Limits }) {
+type Preference = "auto" | PaymentCurrency;
+
+function NewPaymentForm({
+  limits: allLimits,
+  coins,
+  feeBps,
+}: {
+  limits: Limits;
+  /** Payment coins turned on (business settings). */
+  coins: PaymentCurrency[];
+  /** LamportPay's conversion fee, shown before the payment starts. */
+  feeBps: number | null;
+}) {
   const navigate = useNavigate();
   const { countries, currencies } = useDestinationOptions();
   const [amount, setAmount] = useState("");
-  const [sourceCurrency, setSourceCurrency] = useState<PaymentCurrency>("usdc");
+  const [preference, setPreference] = useState<Preference>("auto");
+  const [walletKey, setWalletKey] = useState<string | null>(null);
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("");
-  const limits = allLimits[sourceCurrency] ?? null;
-  const coin = sourceCurrency.toUpperCase();
+  const single = coins.length === 1 ? coins[0]! : null;
+  const chosen: Preference = single ?? preference;
+  const limits =
+    allLimits[chosen === "auto" ? (coins[0] ?? PAYMENT_CURRENCIES[0]) : chosen] ?? null;
+  const coin =
+    chosen === "auto" ? coins.map((c) => c.toUpperCase()).join(" or ") : chosen.toUpperCase();
 
   const create = useMutation({
     mutationFn: async () =>
       (
         await paymentApi<PaymentView>("/api/payments", {
           method: "POST",
-          body: { amount, sourceCurrency, country, currency: currency.toLowerCase() },
+          body: {
+            amount,
+            preferredCurrency: chosen,
+            country,
+            currency: currency.toLowerCase(),
+            ...(walletKey && { wallet: walletKey }),
+          },
         })
       ).data,
     onSuccess: (payment) => void navigate({ to: "/pay", search: { payment: payment.id } }),
@@ -349,23 +408,26 @@ function NewPaymentForm({ limits: allLimits }: { limits: Limits }) {
             <div className="flex gap-2">
               <input
                 inputMode="decimal"
-                placeholder={limits?.min ?? "100"}
+                placeholder={limits?.min ?? ""}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
                 className={INPUT}
               />
-              <select
-                aria-label="Stablecoin"
-                value={sourceCurrency}
-                onChange={(e) => setSourceCurrency(e.target.value as PaymentCurrency)}
-                className={`${INPUT} w-auto`}
-              >
-                {PAYMENT_CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+              {!single && (
+                <select
+                  aria-label="Pay with"
+                  value={preference}
+                  onChange={(e) => setPreference(e.target.value as Preference)}
+                  className={`${INPUT} w-auto`}
+                >
+                  <option value="auto">Automatic</option>
+                  {coins.map((c) => (
+                    <option key={c} value={c}>
+                      {c.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </Field>
           <Field label="Recipient country">
@@ -395,10 +457,27 @@ function NewPaymentForm({ limits: allLimits }: { limits: Limits }) {
         </div>
         <p className="text-sm text-muted-foreground">
           Paid out to a bank account in your own name.{" "}
-          {limits && `Payments are ${grouped(limits.min)}–${grouped(limits.max)} ${coin}. `}
+          {limits &&
+            (limits.max
+              ? `Payments are ${grouped(limits.min)}–${grouped(limits.max)} ${coin}. `
+              : `Payments start at ${grouped(limits.min)} ${coin}. `)}
+          {feeBps !== null &&
+            feeBps > 0 &&
+            `A ${feeBps / 100}% LamportPay fee is added on top and shown in your quote. `}
           Stables checks whether it can pay out to this country and currency, and whether it accepts
           the amount, before anything is created.
         </p>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">
+            Connect your wallet so we can use what you already hold
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Optional. Connecting shares only your public address; nothing is signed. With Automatic,
+            we pick the coin you already hold that pays out best, and only suggest a swap if you
+            hold neither.
+          </p>
+          <WalletKeyIsland onChange={setWalletKey} />
+        </div>
         <button
           type="submit"
           disabled={create.isPending || !amount || !country || !currency}
@@ -415,7 +494,7 @@ function NewPaymentForm({ limits: allLimits }: { limits: Limits }) {
 
 // ----------------------------------------------------------------- payment
 
-function PaymentPanel({ paymentId }: { paymentId: string }) {
+function PaymentPanel({ paymentId, stablesMode }: { paymentId: string; stablesMode?: string }) {
   const queryClient = useQueryClient();
   const key = ["payment", paymentId];
   const payment = useQuery({
@@ -484,7 +563,21 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
         </div>
 
         <div className="grid sm:grid-cols-2 gap-3">
-          <KV k="You send" v={money(p.source.amountMinor, p.source.currency)} />
+          {p.platformFee ? (
+            <>
+              <KV k="Amount converted" v={money(p.source.amountMinor, p.source.currency)} />
+              <KV
+                k={`LamportPay fee (${p.platformFee.bps / 100}%)`}
+                v={money(p.platformFee.amountMinor, p.platformFee.currency)}
+              />
+              <KV
+                k="Total from your wallet"
+                v={money(p.totalToPay.amountMinor, p.totalToPay.currency)}
+              />
+            </>
+          ) : (
+            <KV k="You send" v={money(p.source.amountMinor, p.source.currency)} />
+          )}
           {p.actualPayout ? (
             <KV
               k="Your bank account received"
@@ -511,6 +604,15 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
           ))}
         </div>
         {p.failureReason && <Notice tone="warn">{p.failureReason}</Notice>}
+        {p.payoutEstimateMinutes !== null && !walletCheck && (
+          <Notice tone="info">
+            Usually reaches your bank within about{" "}
+            {p.payoutEstimateMinutes >= 60 && p.payoutEstimateMinutes % 60 === 0
+              ? `${p.payoutEstimateMinutes / 60} hour${p.payoutEstimateMinutes === 60 ? "" : "s"}`
+              : `${p.payoutEstimateMinutes} minutes`}
+            . This is an estimate; each step's actual time appears in the timeline below.
+          </Notice>
+        )}
 
         {preTransfer && (
           <div className="space-y-3">
@@ -530,6 +632,9 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
         )}
       </Card>
 
+      {preTransfer && p.settlement && (
+        <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
+      )}
       {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
       {p.status === "QUOTED" && (
         <BeneficiaryForm
@@ -585,9 +690,154 @@ function PaymentPanel({ paymentId }: { paymentId: string }) {
   );
 }
 
+const SETTLEMENT_TITLES: Record<string, string> = {
+  funds_ready: "Ready to pay",
+  tentative: "Connect your wallet",
+  swap_required: "A swap is needed first",
+  needs_sol: "Add SOL for network fees",
+  insufficient_funds: "Not enough funds",
+};
+
+/**
+ * Which coin pays, and why: real balances of the connected wallet and Stables'
+ * answer for each coin. The coin can change only before the quote and any swap.
+ */
+function SettlementCard({
+  payment,
+  stablesMode,
+  onChanged,
+}: {
+  payment: PaymentView;
+  stablesMode?: string;
+  onChanged: (p: PaymentView) => void;
+}) {
+  const s = payment.settlement!;
+  const [walletKey, setWalletKey] = useState<string | null>(null);
+  const coin = (s.coin ?? payment.source.currency).toUpperCase();
+  const canChange =
+    ["PAYMENT_CREATED", "KYC_PENDING", "KYC_APPROVED"].includes(payment.status) &&
+    !payment.quote &&
+    !payment.latestSwap;
+  const recheck = useMutation({
+    mutationFn: async () =>
+      (
+        await paymentApi<PaymentView>(`/api/payments/${payment.id}/settlement`, {
+          method: "POST",
+          body: walletKey ? { wallet: walletKey } : {},
+        })
+      ).data,
+    onSuccess: onChanged,
+  });
+  const swap = payment.latestSwap;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-semibold">
+          Paying with {coin} — {SETTLEMENT_TITLES[s.kind] ?? s.kind.replace(/_/g, " ")}
+        </div>
+        <span className="text-xs text-muted-foreground">
+          Checked {new Date(s.checkedAt).toLocaleTimeString()}
+        </span>
+      </div>
+      <p className="text-sm">{s.reason}</p>
+
+      <div className="grid sm:grid-cols-2 gap-3">
+        <KV
+          k={s.wallet ? `Your wallet ${shortAddress(s.wallet)}` : "Your wallet"}
+          v={
+            s.holdings?.status === "ok"
+              ? [
+                  `${s.holdings.sol} SOL`,
+                  ...Object.entries(s.holdings.tokens).map(([c, v]) => `${v} ${c.toUpperCase()}`),
+                ].join(" · ")
+              : s.holdings?.status === "unavailable"
+                ? "We couldn't read your wallet"
+                : "Not connected"
+          }
+        />
+        {s.candidates.map((c) => (
+          <KV
+            key={c.coin}
+            k={`${c.coin.toUpperCase()} with Stables`}
+            v={
+              c.verdict === "priced" && c.destinationAmount
+                ? `pays out ${c.destinationAmount} ${payment.destination.currency.toUpperCase()}`
+                : (c.reason ?? c.verdict.replace(/_/g, " "))
+            }
+          />
+        ))}
+      </div>
+
+      {s.kind === "needs_sol" && s.solNeeded && (
+        <Notice tone="warn">
+          Add at least {s.solNeeded} SOL to your wallet, then check again.
+        </Notice>
+      )}
+      {s.kind === "insufficient_funds" && s.shortfall && (
+        <Notice tone="warn">
+          Add {s.shortfall} {coin} to your wallet, then check again.
+        </Notice>
+      )}
+
+      {s.kind === "swap_required" && s.wallet && s.shortfall && (
+        <div className="space-y-3">
+          {stablesMode !== "live" ? (
+            <Notice tone="info">
+              Swaps run on Solana mainnet and are disabled with the Stables sandbox, like the
+              deposit itself. In production you would swap the missing {s.shortfall} {coin} here.
+            </Notice>
+          ) : payment.status !== "KYC_APPROVED" ? (
+            <Notice tone="info">Verify your identity first; the swap comes after.</Notice>
+          ) : (
+            <PaymentSwapIsland
+              paymentId={payment.id}
+              wallet={s.wallet}
+              coin={coin}
+              shortfall={s.shortfall}
+              onChanged={onChanged}
+            />
+          )}
+        </div>
+      )}
+
+      {swap && (
+        <p className="text-sm text-muted-foreground">
+          Last swap:{" "}
+          {swap.status === "landed"
+            ? `${swap.actualOut} ${swap.outputAsset.toUpperCase()} arrived in your wallet.`
+            : swap.status === "submitted"
+              ? "being confirmed on Solana."
+              : `${swap.status}${swap.failureReason ? ` — ${swap.failureReason}` : ""}.`}
+        </p>
+      )}
+
+      {canChange && (
+        <div className="space-y-3">
+          <WalletKeyIsland onChange={setWalletKey} />
+          <button
+            type="button"
+            onClick={() => recheck.mutate()}
+            disabled={recheck.isPending}
+            className={SECONDARY}
+          >
+            {recheck.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Check my wallet again
+          </button>
+          {recheck.error && <ErrorText error={recheck.error} />}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /**
  * Travel Rule: Stables holds the transfer until the user proves they own the
- * self-custody wallet the USDC came from. Stables has no API to submit that
+ * self-custody wallet the stablecoin came from. Stables has no API to submit that
  * proof, so the check itself runs on its hosted page (opened in a new tab,
  * like identity verification); this card is the step in our flow around it.
  */
@@ -605,9 +855,9 @@ function TravelRuleCard({ payment, onCheck }: { payment: PaymentView; onCheck: (
         Verify the wallet you paid from
       </div>
       <p className="text-sm text-muted-foreground">
-        Under the Travel Rule, Stables must confirm that the self-custody wallet the USDC came from
-        belongs to you. Your transfer is on hold until you do. It is a one-time check on Stables'
-        secure page.
+        Under the Travel Rule, Stables must confirm that the self-custody wallet the{" "}
+        {(payment.deposit?.currency ?? payment.source.currency).toUpperCase()} came from belongs to
+        you. Your transfer is on hold until you do. It is a one-time check on Stables' secure page.
       </p>
 
       {expired ? (
@@ -1084,6 +1334,11 @@ function DepositCard({ payment, onFunded }: { payment: PaymentView; onFunded: ()
 
   const coin = deposit.currency.toUpperCase();
   const issue = payment.depositIssue;
+  // With a LamportPay fee, paying happens through the wallet button only: it sends the
+  // deposit and the fee in one transaction. No copy-and-send instructions are shown, so
+  // the fee can't be left out by accident. Recovery stays possible: a transaction the
+  // button prepared can still be verified by its signature.
+  const walletOnly = Boolean(payment.platformFee);
 
   return (
     <Card>
@@ -1103,15 +1358,25 @@ function DepositCard({ payment, onFunded }: { payment: PaymentView; onFunded: ()
         </Notice>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Send exactly this amount of {coin} on Solana to this single-use deposit address. Use it
-          for this payment only.
+          {walletOnly
+            ? `Pay with your wallet below. One transaction sends the exact deposit to a single-use Stables address and the LamportPay fee: ${payment.totalToPay.amount} ${coin} in total. Your wallet shows both transfers before you approve.`
+            : `Send exactly this amount of ${coin} on Solana to this single-use deposit address. Use it for this payment only.`}
         </p>
       )}
-      <div className="grid gap-3">
-        <KV k="Amount" v={<CopyValue value={deposit.amount} suffix={` ${coin}`} />} />
-        <KV k="Network" v="Solana (mainnet)" />
-        <KV k="Deposit address" v={<CopyValue value={deposit.address} mono />} />
-      </div>
+      {walletOnly ? (
+        <div className="grid gap-3">
+          <KV k="Deposit amount" v={`${deposit.amount} ${coin}`} />
+          <KV k="LamportPay fee" v={`${payment.platformFee!.amount} ${coin}`} />
+          <KV k="Total from your wallet" v={`${payment.totalToPay.amount} ${coin}`} />
+          <KV k="Network" v={deposit.network === "solana" ? "Solana (mainnet)" : deposit.network} />
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          <KV k="Amount" v={<CopyValue value={deposit.amount} suffix={` ${coin}`} />} />
+          <KV k="Network" v={deposit.network === "solana" ? "Solana (mainnet)" : deposit.network} />
+          <KV k="Deposit address" v={<CopyValue value={deposit.address} mono />} />
+        </div>
+      )}
 
       {!issue && (
         <FundingPanelIsland
@@ -1119,67 +1384,67 @@ function DepositCard({ payment, onFunded }: { payment: PaymentView; onFunded: ()
           amount={deposit.amount}
           currency={coin}
           depositAddress={deposit.address}
+          platformFee={payment.platformFee?.amount ?? null}
           onFunded={onFunded}
         />
       )}
 
-      {deposit.currency === "usdc" && !issue && (
+      {/* With a fee, only a transaction the wallet button prepared can be verified here. */}
+      {(!walletOnly || payment.payerWallet) && (
         <details className="rounded-2xl border border-border/60 p-4">
           <summary className="text-sm font-semibold cursor-pointer">
-            Need USDC? Swap SOL → USDC
+            {walletOnly ? "Sent it, but this page didn't confirm?" : "Sent it from another wallet?"}
           </summary>
-          <div className="mt-4">
-            <SwapPanelIsland />
-          </div>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {walletOnly
+              ? "If your wallet sent the payment but this page didn't update, paste the transaction signature from your wallet's activity to confirm it. Don't send again."
+              : payment.payerWallet
+                ? `The ${coin} must come from the wallet this payment was prepared for. Exchange withdrawals often take a fee from the amount, which would deliver the wrong amount: send from your own wallet instead.`
+                : `Enter the wallet you sent from. The ${coin} must come from, and be signed by, that wallet. Exchange withdrawals often take a fee from the amount, which would deliver the wrong amount: send from your own wallet instead.`}
+          </p>
+          <form
+            className="mt-3 grid gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              verify.mutate();
+            }}
+          >
+            {!walletOnly && (
+              <input
+                placeholder="Your sending wallet address"
+                value={payer}
+                disabled={Boolean(payment.payerWallet)}
+                onChange={(e) => setPayer(e.target.value)}
+                className={`${INPUT} font-mono text-xs`}
+              />
+            )}
+            <input
+              placeholder="Transaction signature"
+              value={signature}
+              onChange={(e) => setSignature(e.target.value)}
+              className={`${INPUT} font-mono text-xs`}
+            />
+            <button
+              type="submit"
+              disabled={verify.isPending || !signature.trim() || !payer.trim()}
+              className={`${SECONDARY} justify-self-start`}
+            >
+              {verify.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Verify
+            </button>
+          </form>
+          {verify.error && <ErrorText error={verify.error} />}
         </details>
       )}
-
-      <details className="rounded-2xl border border-border/60 p-4">
-        <summary className="text-sm font-semibold cursor-pointer">
-          Sent it from another wallet?
-        </summary>
-        <p className="mt-3 text-sm text-muted-foreground">
-          {payment.payerWallet
-            ? `The ${coin} must come from the wallet this payment was prepared for.`
-            : `Enter the wallet you sent from. The ${coin} must come from, and be signed by, that wallet.`}
-        </p>
-        <form
-          className="mt-3 grid gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            verify.mutate();
-          }}
-        >
-          <input
-            placeholder="Your sending wallet address"
-            value={payer}
-            disabled={Boolean(payment.payerWallet)}
-            onChange={(e) => setPayer(e.target.value)}
-            className={`${INPUT} font-mono text-xs`}
-          />
-          <input
-            placeholder="Transaction signature"
-            value={signature}
-            onChange={(e) => setSignature(e.target.value)}
-            className={`${INPUT} font-mono text-xs`}
-          />
-          <button
-            type="submit"
-            disabled={verify.isPending || !signature.trim() || !payer.trim()}
-            className={`${SECONDARY} justify-self-start`}
-          >
-            {verify.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            Verify
-          </button>
-        </form>
-        {verify.error && <ErrorText error={verify.error} />}
-      </details>
     </Card>
   );
 }
 
 function Timeline({ payment }: { payment: PaymentView }) {
-  const rows = payment.events.filter((e) => e.kind !== "funding_transaction_built");
+  // Internal bookkeeping events stay out of the user's timeline.
+  const rows = payment.events.filter(
+    (e) => e.kind !== "funding_transaction_built" && e.kind !== "platform_fee_mismatch",
+  );
   if (rows.length === 0) return null;
   return (
     <Card>

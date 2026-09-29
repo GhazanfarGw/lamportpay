@@ -21,8 +21,15 @@ describe("solana rpc health", () => {
       expect(res.status).toBe(200);
       expect(res.body.cluster).toBe(cluster);
       expect(res.body.jupiterSwapAvailable).toBe(cluster === "mainnet-beta");
-      expect(res.body.customEndpoint).toBe(true);
-      expect(res.body.endpointProvider).toBe("Alchemy");
+      if (cluster === "testnet") {
+        // No custom testnet endpoint is configured for this project (Alchemy has
+        // no Solana testnet); the server falls back to the public endpoint.
+        if (res.body.customEndpoint) expect(res.body.endpointProvider).toBeTruthy();
+        else expect(res.body.endpointProvider).toBeNull();
+      } else {
+        expect(res.body.customEndpoint).toBe(true);
+        expect(res.body.endpointProvider).toBe("Alchemy");
+      }
       if (res.status === 200) {
         expect(res.body.reachable).toBe(true);
         expect(typeof res.body.slot).toBe("number");

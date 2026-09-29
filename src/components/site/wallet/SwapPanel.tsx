@@ -12,8 +12,23 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { supabase } from "@/integrations/supabase/client";
 import { SOL_MINT, USDC_MINT } from "@/lib/tokens";
 import { WalletStatusCard } from "./SolanaWallet";
+
+/** POST to a swap route with the signed-in user's token; the routes refuse anonymous callers. */
+async function postSigned(path: string, body: unknown): Promise<Response> {
+  const { data: session } = await supabase.auth.getSession();
+  const token = session.session?.access_token;
+  if (!token) throw new Error("Sign in to swap.");
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) throw new Error("Sign in to swap.");
+  return res;
+}
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const MIN_SOL = 0.001;
@@ -169,15 +184,11 @@ export function SwapPanel({ onExecuted }: SwapPanelProps = {}) {
 
     setBusy("order");
     try {
-      const res = await fetch("/api/jupiter/order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          inputMint: SOL_MINT,
-          outputMint: USDC_MINT,
-          amount: lamports,
-          taker: address,
-        }),
+      const res = await postSigned("/api/jupiter/order", {
+        inputMint: SOL_MINT,
+        outputMint: USDC_MINT,
+        amount: lamports,
+        taker: address,
       });
       const data = (await res.json()) as OrderResult & { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? "Failed to create Jupiter order.");
@@ -213,16 +224,12 @@ export function SwapPanel({ onExecuted }: SwapPanelProps = {}) {
     setError(null);
     setBusy("execute");
     try {
-      const res = await fetch("/api/jupiter/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          signedTransaction: signed,
-          requestId: order.requestId,
-          ...(order.lastValidBlockHeight != null
-            ? { lastValidBlockHeight: String(order.lastValidBlockHeight) }
-            : {}),
-        }),
+      const res = await postSigned("/api/jupiter/execute", {
+        signedTransaction: signed,
+        requestId: order.requestId,
+        ...(order.lastValidBlockHeight != null
+          ? { lastValidBlockHeight: String(order.lastValidBlockHeight) }
+          : {}),
       });
       const data = (await res.json()) as ExecuteResult & { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? "Swap execution failed.");

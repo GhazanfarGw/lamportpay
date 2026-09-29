@@ -114,9 +114,12 @@ export function usdcTransferTx(options: {
   mint?: string;
   err?: unknown;
   fromStart?: bigint;
+  /** LamportPay's fee leg in the same transaction. */
+  fee?: { to: string; amount: bigint };
 }): NonNullable<TxResult> {
   const start = options.fromStart ?? 1_000_000_000n;
   const mint = options.mint ?? USDC_MINT;
+  const feeAmount = options.fee?.amount ?? 0n;
   return {
     slot: 300_000_000,
     blockTime: Math.floor(Date.now() / 1000),
@@ -127,8 +130,9 @@ export function usdcTransferTx(options: {
       postBalances: [],
       preTokenBalances: [balance(1, options.from, start, mint)],
       postTokenBalances: [
-        balance(1, options.from, start - options.amount, mint),
+        balance(1, options.from, start - options.amount - feeAmount, mint),
         balance(2, options.to, options.amount, mint),
+        ...(options.fee ? [balance(3, options.fee.to, options.fee.amount, mint)] : []),
       ],
     },
     transaction: {
@@ -179,7 +183,12 @@ export function transferEvent(
   };
 }
 
-export function kycEvent(customerId: string, status: string) {
+/**
+ * kyc_link.updated.status_transitioned. Real ones name the verification level
+ * (`kyc_level`: INDIVIDUAL_BASE, or a step-up such as
+ * INDIVIDUAL_PROOF_OF_ADDRESS) and use the KYC link as `event_object_id`.
+ */
+export function kycEvent(customerId: string, status: string, level?: string) {
   return {
     api_version: "v1",
     event_id: `evt_${++eventCounter}_${randomBytes(3).toString("hex")}`,
@@ -187,7 +196,7 @@ export function kycEvent(customerId: string, status: string) {
     event_type: "kyc_link.updated.status_transitioned",
     event_object_id: customerId,
     event_object_status: status,
-    event_object: { customer_id: customerId, status },
+    event_object: { customer_id: customerId, status, ...(level && { kyc_level: level }) },
     event_created_at: new Date().toISOString(),
   };
 }

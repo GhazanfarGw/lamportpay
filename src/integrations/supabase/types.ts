@@ -95,6 +95,93 @@ export type Database = {
         }
         Relationships: []
       }
+      business_settings: {
+        Row: {
+          conversion_fee_bps: number | null
+          enabled_currencies: string[] | null
+          id: boolean
+          revenue_wallet: string | null
+          swap_fee_bps: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          conversion_fee_bps?: number | null
+          enabled_currencies?: string[] | null
+          id?: boolean
+          revenue_wallet?: string | null
+          swap_fee_bps?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          conversion_fee_bps?: number | null
+          enabled_currencies?: string[] | null
+          id?: boolean
+          revenue_wallet?: string | null
+          swap_fee_bps?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      jupiter_swap_orders: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          in_amount_minor: number
+          input_mint: string
+          jupiter_error: string | null
+          jupiter_request_id: string
+          jupiter_status: string | null
+          order_transaction: string
+          output_mint: string
+          relayed_at: string | null
+          signature: string | null
+          status: string
+          taker: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          in_amount_minor: number
+          input_mint: string
+          jupiter_error?: string | null
+          jupiter_request_id: string
+          jupiter_status?: string | null
+          order_transaction: string
+          output_mint: string
+          relayed_at?: string | null
+          signature?: string | null
+          status?: string
+          taker: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          in_amount_minor?: number
+          input_mint?: string
+          jupiter_error?: string | null
+          jupiter_request_id?: string
+          jupiter_status?: string | null
+          order_transaction?: string
+          output_mint?: string
+          relayed_at?: string | null
+          signature?: string | null
+          status?: string
+          taker?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       mock_kyc_submissions: {
         Row: {
           country: string
@@ -267,6 +354,98 @@ export type Database = {
           },
         ]
       }
+      payment_swaps: {
+        Row: {
+          actual_in_minor: number | null
+          actual_out_minor: number | null
+          attempt: number
+          created_at: string
+          failure_reason: string | null
+          id: string
+          in_amount_minor: number
+          input_mint: string
+          jupiter_error: string | null
+          jupiter_request_id: string
+          jupiter_status: string | null
+          last_valid_block_height: number | null
+          min_out_minor: number
+          order_message_sha256: string
+          order_transaction: string
+          output_mint: string
+          payment_id: string
+          price_impact_pct: number | null
+          shortfall_minor: number
+          signature: string | null
+          slippage_bps: number | null
+          status: string
+          swap_mode: string
+          taker: string
+          updated_at: string
+        }
+        Insert: {
+          actual_in_minor?: number | null
+          actual_out_minor?: number | null
+          attempt: number
+          created_at?: string
+          failure_reason?: string | null
+          id?: string
+          in_amount_minor: number
+          input_mint: string
+          jupiter_error?: string | null
+          jupiter_request_id: string
+          jupiter_status?: string | null
+          last_valid_block_height?: number | null
+          min_out_minor: number
+          order_message_sha256: string
+          order_transaction: string
+          output_mint: string
+          payment_id: string
+          price_impact_pct?: number | null
+          shortfall_minor: number
+          signature?: string | null
+          slippage_bps?: number | null
+          status?: string
+          swap_mode: string
+          taker: string
+          updated_at?: string
+        }
+        Update: {
+          actual_in_minor?: number | null
+          actual_out_minor?: number | null
+          attempt?: number
+          created_at?: string
+          failure_reason?: string | null
+          id?: string
+          in_amount_minor?: number
+          input_mint?: string
+          jupiter_error?: string | null
+          jupiter_request_id?: string
+          jupiter_status?: string | null
+          last_valid_block_height?: number | null
+          min_out_minor?: number
+          order_message_sha256?: string
+          order_transaction?: string
+          output_mint?: string
+          payment_id?: string
+          price_impact_pct?: number | null
+          shortfall_minor?: number
+          signature?: string | null
+          slippage_bps?: number | null
+          status?: string
+          swap_mode?: string
+          taker?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_swaps_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payments: {
         Row: {
           actual_payout_currency: string | null
@@ -275,6 +454,8 @@ export type Database = {
           created_at: string
           deposit_address: string | null
           deposit_amount_minor: number | null
+          deposit_currency: string | null
+          deposit_network: string | null
           destination_amount_minor: number | null
           destination_country: string
           destination_currency: string
@@ -286,6 +467,10 @@ export type Database = {
           funding_verified_at: string | null
           id: string
           payer_wallet: string | null
+          platform_fee_bps: number | null
+          platform_fee_minor: number | null
+          platform_fee_received_minor: number | null
+          platform_fee_wallet: string | null
           pre_hold_status: string | null
           purpose_code: string | null
           quote_expires_at: string | null
@@ -314,6 +499,8 @@ export type Database = {
           created_at?: string
           deposit_address?: string | null
           deposit_amount_minor?: number | null
+          deposit_currency?: string | null
+          deposit_network?: string | null
           destination_amount_minor?: number | null
           destination_country: string
           destination_currency: string
@@ -325,6 +512,10 @@ export type Database = {
           funding_verified_at?: string | null
           id?: string
           payer_wallet?: string | null
+          platform_fee_bps?: number | null
+          platform_fee_minor?: number | null
+          platform_fee_received_minor?: number | null
+          platform_fee_wallet?: string | null
           pre_hold_status?: string | null
           purpose_code?: string | null
           quote_expires_at?: string | null
@@ -353,6 +544,8 @@ export type Database = {
           created_at?: string
           deposit_address?: string | null
           deposit_amount_minor?: number | null
+          deposit_currency?: string | null
+          deposit_network?: string | null
           destination_amount_minor?: number | null
           destination_country?: string
           destination_currency?: string
@@ -364,6 +557,10 @@ export type Database = {
           funding_verified_at?: string | null
           id?: string
           payer_wallet?: string | null
+          platform_fee_bps?: number | null
+          platform_fee_minor?: number | null
+          platform_fee_received_minor?: number | null
+          platform_fee_wallet?: string | null
           pre_hold_status?: string | null
           purpose_code?: string | null
           quote_expires_at?: string | null

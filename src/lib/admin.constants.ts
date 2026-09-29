@@ -115,6 +115,7 @@ export const ENTITY_LABELS: Record<string, string> = {
   payout_transfer: "Payout",
   user_role: "Role",
   admin_invite: "Invite",
+  business_settings: "Fees and revenue",
 };
 
 // ------------------------------------------------- live Stables payments

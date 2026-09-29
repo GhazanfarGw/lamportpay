@@ -25,12 +25,12 @@ function SwapPage() {
         <div className="text-xs font-semibold uppercase tracking-wider text-primary">
           Jupiter swap
         </div>
-        <h1 className="mt-2 text-4xl md:text-5xl font-semibold tracking-tight">
+        <h1 className="mt-2 text-5 md:text-5xl font-semibold tracking-tight">
           Swap SOL to USDC.
         </h1>
         <p className="mt-4 text-lg text-muted-foreground">
-          Connect Phantom or Solflare, create a Jupiter order, sign it in your wallet, and execute
-          the swap. Fiat payout stays disabled.
+          Sign in, connect Phantom or Solflare, create a Jupiter order, sign it in your wallet, and
+          execute the swap. The output stays in your own wallet. To pay out to a bank, use Pay.
         </p>
 
         <div className="mt-10">

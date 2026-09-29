@@ -13,7 +13,7 @@ const PEOPLE = [
   { name: "KYC disabled", city: "Demo only", corridor: "SOL → USDC" },
   { name: "No user funds held", city: "Non-custodial", corridor: "SOL → USDC" },
   { name: "On-chain receipt", city: "Solscan link", corridor: "SOL → USDC" },
-  { name: "Mock fiat payout demo", city: "/send", corridor: "SOL → USDC" },
+  { name: "Own-account bank payouts", city: "/pay", corridor: "USDC · USDT" },
 ];
 
 type Person = (typeof PEOPLE)[number];

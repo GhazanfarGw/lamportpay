@@ -2,6 +2,7 @@ import { Component, lazy, Suspense, useState, type ReactElement, type ReactNode 
 import { ClientOnly } from "@tanstack/react-router";
 
 import type { FundingPanelProps } from "./FundingPanel";
+import type { PaymentSwapPanelProps } from "./PaymentWallet";
 import type { SwapExecution } from "./SwapPanel";
 
 type WalletModule = {
@@ -112,6 +113,21 @@ const Funding = lazy(async () => {
   return { default: m.FundingPanel };
 });
 
+const Key = lazy(async () => {
+  if (typeof window === "undefined") return { default: WalletFallbackCard };
+  const polyfill = await import("@/lib/buffer-polyfill");
+  polyfill.installBufferPolyfill();
+  const m = await import("./PaymentWallet");
+  return { default: m.WalletKey };
+});
+const PaymentSwap = lazy(async () => {
+  if (typeof window === "undefined") return { default: WalletFallbackCard };
+  const polyfill = await import("@/lib/buffer-polyfill");
+  polyfill.installBufferPolyfill();
+  const m = await import("./PaymentWallet");
+  return { default: m.PaymentSwapPanel };
+});
+
 function Island({ children, fallback }: { children: ReactNode; fallback: ReactNode }) {
   return (
     <ClientOnly fallback={fallback}>
@@ -167,6 +183,24 @@ export function SwapPanelIsland({
   return (
     <Island fallback={<WalletFallbackCard />}>
       <Swap onExecuted={onExecuted} />
+    </Island>
+  );
+}
+
+/** Connect card that reports the connected public key (connecting is not signing). */
+export function WalletKeyIsland({ onChange }: { onChange: (publicKey: string | null) => void }) {
+  return (
+    <Island fallback={<WalletFallbackCard />}>
+      <Key onChange={onChange} />
+    </Island>
+  );
+}
+
+/** Swap the missing amount into a payment's coin, in the user's own wallet. */
+export function PaymentSwapIsland(props: PaymentSwapPanelProps) {
+  return (
+    <Island fallback={<WalletFallbackCard />}>
+      <PaymentSwap {...props} />
     </Island>
   );
 }

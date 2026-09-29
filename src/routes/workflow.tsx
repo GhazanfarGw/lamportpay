@@ -21,13 +21,13 @@ export const Route = createFileRoute("/workflow")({
 const STAGES = [
   {
     stage: "1. Transfer details",
-    demo: "You choose token, amount, corridor and payout method on /send.",
+    demo: "You choose the amount, the country and the payout currency on /pay.",
     provider: "None",
     real: "Same form, but corridor availability would be validated against a regulated payout partner's supported rails.",
   },
   {
     stage: "2. Swap routing",
-    demo: "Jupiter API mode fetches a read-only route preview; otherwise local mock routing is shown.",
+    demo: "Signed-in users get a read-only route preview from Jupiter; there is no mock routing.",
     provider: "Jupiter",
     real: "Jupiter /swap/v2/order returns the transaction; you sign it in your own wallet.",
   },
@@ -149,10 +149,10 @@ function WorkflowPage() {
             Try SOL → USDC Swap Demo <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
-            to="/send"
+            to="/pay"
             className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-semibold hover:bg-secondary transition"
           >
-            View Mock Fiat Payout Demo
+            Send a payment
           </Link>
         </div>
       </div>

@@ -1,18 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { SOL_MINT, USDC_MINT, isSupportedInputMint } from "@/lib/tokens";
+import { authenticateUser } from "@/lib/payments/auth.server";
 import {
-  MOCK_SOL_USD,
-  baseUnitsToUsdc,
-  buildMockRoutePreview,
-  lamportsToSol,
-  type RouteStepPreview,
-  type SwapRoutePreview,
+  buildRoutePreview,
+  hasRoute,
+  readJupiterError,
+  type JupiterOrderPayload,
 } from "@/lib/swap-route";
+import { SOL_MINT, USDC_MINT, isSupportedInputMint } from "@/lib/tokens";
+import { currentSwapReferral } from "@/lib/jupiter/referral.server";
 
-// Read-only route preview. No taker, no transaction, no signing.
-// Same safety limits as the real order endpoint.
+// Read-only route preview for a signed-in user. No taker, no transaction, no
+// signing. Same safety limits as the real order endpoint, and no mock
+// fallback: when Jupiter can't route, the caller gets the error.
 const MIN_LAMPORTS = 1_000_000; // 0.001 SOL
 const MAX_LAMPORTS = 10_000_000; // 0.01 SOL
 
@@ -28,29 +29,36 @@ const QuoteInput = z
   })
   .strict();
 
-const SYMBOLS: Record<string, string> = { [SOL_MINT]: "SOL", [USDC_MINT]: "USDC" };
-const symbolFor = (mint?: string) => (mint && SYMBOLS[mint]) || `${mint?.slice(0, 4) ?? "?"}…`;
+const NO_STORE = { "Cache-Control": "no-store" };
 
-type JupRoutePlan = {
-  percent?: number;
-  swapInfo?: {
-    ammKey?: string;
-    label?: string;
-    inputMint?: string;
-    outputMint?: string;
-    feeAmount?: string;
-    feeMint?: string;
-  };
-};
+function json(body: unknown, status = 200) {
+  return Response.json(body, { status, headers: NO_STORE });
+}
 
 function errorResponse(message: string, status: number) {
-  return Response.json({ error: message }, { status });
+  return json({ error: message }, status);
+}
+
+/** The signed-in user, or the 401 to send back. Anonymous callers never reach Jupiter. */
+async function requireUser(request: Request): Promise<Response | null> {
+  try {
+    const auth = await authenticateUser(request);
+    if (!auth.denied) return null;
+    auth.denied.headers.set("Cache-Control", "no-store");
+    return auth.denied;
+  } catch (error) {
+    console.error("[jupiter] sign-in check failed", error);
+    return errorResponse("Sign-in could not be checked. Try again shortly.", 503);
+  }
 }
 
 export const Route = createFileRoute("/api/jupiter/quote")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const denied = await requireUser(request);
+        if (denied) return denied;
+
         let body: unknown;
         try {
           body = await request.json();
@@ -85,105 +93,50 @@ export const Route = createFileRoute("/api/jupiter/quote")({
         }
 
         const apiKey = process.env["JUPITER_API_KEY"];
-        if (!apiKey) {
-          return Response.json(buildMockRoutePreview(amount));
-        }
+        if (!apiKey) return errorResponse("Swaps are not configured.", 503);
 
         const url = new URL("https://api.jup.ag/swap/v2/order");
         url.searchParams.set("inputMint", SOL_MINT);
         url.searchParams.set("outputMint", USDC_MINT);
         url.searchParams.set("amount", amount);
+        // Same integrator fee as the order, so the preview matches what is signed.
+        let referral;
+        try {
+          referral = await currentSwapReferral();
+        } catch {
+          return errorResponse("Swaps are temporarily unavailable.", 503);
+        }
+        if (referral) {
+          url.searchParams.set("referralAccount", referral.account);
+          url.searchParams.set("referralFee", String(referral.feeBps));
+        }
 
         let upstream: Response;
         try {
           upstream = await fetch(url, {
             headers: { "x-api-key": apiKey, Accept: "application/json" },
+            signal: AbortSignal.timeout(15_000),
           });
         } catch {
-          return Response.json(
-            buildMockRoutePreview(amount, "Could not reach Jupiter — showing mock routing."),
-          );
+          return errorResponse("Could not reach Jupiter. Try again shortly.", 502);
         }
 
-        let payload: {
-          outAmount?: string;
-          otherAmountThreshold?: string;
-          slippageBps?: number;
-          priceImpactPct?: string | number;
-          routePlan?: JupRoutePlan[];
-          error?: string;
-        };
+        let payload: JupiterOrderPayload;
         try {
-          payload = (await upstream.json()) as typeof payload;
+          payload = (await upstream.json()) as JupiterOrderPayload;
         } catch {
-          return Response.json(
-            buildMockRoutePreview(amount, "Invalid Jupiter response — showing mock routing."),
-          );
+          return errorResponse("Invalid response from Jupiter.", 502);
         }
 
-        if (!upstream.ok || !payload.outAmount) {
-          return Response.json(
-            buildMockRoutePreview(
-              amount,
-              `Jupiter route unavailable (${upstream.status}) — showing mock routing.`,
-            ),
-          );
+        // Jupiter reports some failures as HTTP 200 with an error field.
+        if (!upstream.ok || !hasRoute(payload)) {
+          const reason =
+            readJupiterError(payload) ??
+            (upstream.ok ? "Jupiter returned no route." : `Jupiter error (${upstream.status}).`);
+          return errorResponse(reason, 502);
         }
 
-        const inAmountSol = lamportsToSol(amount);
-        const outAmountUsdc = baseUnitsToUsdc(payload.outAmount);
-        // Read-only order previews come back with slippageBps 0; keep the demo's
-        // default tolerance so the min-received figure stays meaningful.
-        const slippageBps = payload.slippageBps && payload.slippageBps > 0 ? payload.slippageBps : 50;
-        const thresholdUsdc = payload.otherAmountThreshold
-          ? baseUnitsToUsdc(payload.otherAmountThreshold)
-          : null;
-        const minOutAmountUsdc =
-          thresholdUsdc !== null && thresholdUsdc < outAmountUsdc
-            ? thresholdUsdc
-            : outAmountUsdc * (1 - slippageBps / 10_000);
-
-        const steps: RouteStepPreview[] = (payload.routePlan ?? []).map((leg) => {
-          const info = leg.swapInfo ?? {};
-          const feeMint = info.feeMint;
-          const feeAmount = info.feeAmount ? Number(info.feeAmount) : null;
-          let feeUsd: number | null = null;
-          if (feeAmount !== null) {
-            if (feeMint === USDC_MINT) feeUsd = baseUnitsToUsdc(feeAmount);
-            else if (feeMint === SOL_MINT) feeUsd = lamportsToSol(feeAmount) * MOCK_SOL_USD;
-          }
-          return {
-            label: `${symbolFor(info.inputMint)} → ${symbolFor(info.outputMint)}`,
-            amm: info.label || info.ammKey?.slice(0, 8) || "Unknown AMM",
-            inputSymbol: symbolFor(info.inputMint),
-            outputSymbol: symbolFor(info.outputMint),
-            percent: leg.percent ?? 100,
-            feeUsd,
-          };
-        });
-
-        const lpFeeUsd = steps.reduce((sum, s) => sum + (s.feeUsd ?? 0), 0);
-
-        const preview: SwapRoutePreview = {
-          source: "sandbox",
-          demoMode: false,
-          message: "Live Jupiter routing data (read-only preview — nothing is signed or sent).",
-          inputMint: SOL_MINT,
-          outputMint: USDC_MINT,
-          inAmountLamports: amount,
-          inAmountSol,
-          outAmountUsdc,
-          minOutAmountUsdc,
-          slippageBps,
-          priceImpactPct:
-            payload.priceImpactPct !== undefined ? Number(payload.priceImpactPct) * 100 : null,
-          networkFeeSol: 0.000005,
-          platformFeeUsd: 0,
-          lpFeeUsd,
-          steps: steps.length > 0 ? steps : buildMockRoutePreview(amount).steps,
-        };
-
-        return Response.json(preview);
+        return json(buildRoutePreview(amount, SOL_MINT, USDC_MINT, payload));
       },
     },
   },

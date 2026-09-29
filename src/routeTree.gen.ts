@@ -45,7 +45,11 @@ import { Route as ApiPaymentsPaymentIdIndexRouteImport } from './routes/api/paym
 import { Route as ApiPaymentsPaymentIdFundingRouteImport } from './routes/api/payments/$paymentId/funding'
 import { Route as ApiPaymentsPaymentIdFundingTransactionRouteImport } from './routes/api/payments/$paymentId/funding-transaction'
 import { Route as ApiPaymentsPaymentIdQuoteRouteImport } from './routes/api/payments/$paymentId/quote'
+import { Route as ApiPaymentsPaymentIdSettlementRouteImport } from './routes/api/payments/$paymentId/settlement'
 import { Route as ApiPaymentsPaymentIdTransferRouteImport } from './routes/api/payments/$paymentId/transfer'
+import { Route as ApiPaymentsPaymentIdSwapsIndexRouteImport } from './routes/api/payments/$paymentId/swaps/index'
+import { Route as ApiPaymentsPaymentIdSwapsSwapIdConfirmRouteImport } from './routes/api/payments/$paymentId/swaps/$swapId/confirm'
+import { Route as ApiPaymentsPaymentIdSwapsSwapIdExecuteRouteImport } from './routes/api/payments/$paymentId/swaps/$swapId/execute'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -234,10 +238,34 @@ const ApiPaymentsPaymentIdQuoteRoute =
     path: '/api/payments/$paymentId/quote',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPaymentsPaymentIdSettlementRoute =
+  ApiPaymentsPaymentIdSettlementRouteImport.update({
+    id: '/api/payments/$paymentId/settlement',
+    path: '/api/payments/$paymentId/settlement',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPaymentsPaymentIdTransferRoute =
   ApiPaymentsPaymentIdTransferRouteImport.update({
     id: '/api/payments/$paymentId/transfer',
     path: '/api/payments/$paymentId/transfer',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPaymentsPaymentIdSwapsIndexRoute =
+  ApiPaymentsPaymentIdSwapsIndexRouteImport.update({
+    id: '/api/payments/$paymentId/swaps/',
+    path: '/api/payments/$paymentId/swaps/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute =
+  ApiPaymentsPaymentIdSwapsSwapIdConfirmRouteImport.update({
+    id: '/api/payments/$paymentId/swaps/$swapId/confirm',
+    path: '/api/payments/$paymentId/swaps/$swapId/confirm',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute =
+  ApiPaymentsPaymentIdSwapsSwapIdExecuteRouteImport.update({
+    id: '/api/payments/$paymentId/swaps/$swapId/execute',
+    path: '/api/payments/$paymentId/swaps/$swapId/execute',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -276,8 +304,12 @@ export interface FileRoutesByFullPath {
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
+  '/api/payments/$paymentId/settlement': typeof ApiPaymentsPaymentIdSettlementRoute
   '/api/payments/$paymentId/transfer': typeof ApiPaymentsPaymentIdTransferRoute
   '/api/payments/$paymentId/': typeof ApiPaymentsPaymentIdIndexRoute
+  '/api/payments/$paymentId/swaps/': typeof ApiPaymentsPaymentIdSwapsIndexRoute
+  '/api/payments/$paymentId/swaps/$swapId/confirm': typeof ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute
+  '/api/payments/$paymentId/swaps/$swapId/execute': typeof ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -314,8 +346,12 @@ export interface FileRoutesByTo {
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
+  '/api/payments/$paymentId/settlement': typeof ApiPaymentsPaymentIdSettlementRoute
   '/api/payments/$paymentId/transfer': typeof ApiPaymentsPaymentIdTransferRoute
   '/api/payments/$paymentId': typeof ApiPaymentsPaymentIdIndexRoute
+  '/api/payments/$paymentId/swaps': typeof ApiPaymentsPaymentIdSwapsIndexRoute
+  '/api/payments/$paymentId/swaps/$swapId/confirm': typeof ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute
+  '/api/payments/$paymentId/swaps/$swapId/execute': typeof ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -354,8 +390,12 @@ export interface FileRoutesById {
   '/api/payments/$paymentId/funding': typeof ApiPaymentsPaymentIdFundingRoute
   '/api/payments/$paymentId/funding-transaction': typeof ApiPaymentsPaymentIdFundingTransactionRoute
   '/api/payments/$paymentId/quote': typeof ApiPaymentsPaymentIdQuoteRoute
+  '/api/payments/$paymentId/settlement': typeof ApiPaymentsPaymentIdSettlementRoute
   '/api/payments/$paymentId/transfer': typeof ApiPaymentsPaymentIdTransferRoute
   '/api/payments/$paymentId/': typeof ApiPaymentsPaymentIdIndexRoute
+  '/api/payments/$paymentId/swaps/': typeof ApiPaymentsPaymentIdSwapsIndexRoute
+  '/api/payments/$paymentId/swaps/$swapId/confirm': typeof ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute
+  '/api/payments/$paymentId/swaps/$swapId/execute': typeof ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -394,8 +434,12 @@ export interface FileRouteTypes {
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
+    | '/api/payments/$paymentId/settlement'
     | '/api/payments/$paymentId/transfer'
     | '/api/payments/$paymentId/'
+    | '/api/payments/$paymentId/swaps/'
+    | '/api/payments/$paymentId/swaps/$swapId/confirm'
+    | '/api/payments/$paymentId/swaps/$swapId/execute'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -432,8 +476,12 @@ export interface FileRouteTypes {
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
+    | '/api/payments/$paymentId/settlement'
     | '/api/payments/$paymentId/transfer'
     | '/api/payments/$paymentId'
+    | '/api/payments/$paymentId/swaps'
+    | '/api/payments/$paymentId/swaps/$swapId/confirm'
+    | '/api/payments/$paymentId/swaps/$swapId/execute'
   id:
     | '__root__'
     | '/'
@@ -471,8 +519,12 @@ export interface FileRouteTypes {
     | '/api/payments/$paymentId/funding'
     | '/api/payments/$paymentId/funding-transaction'
     | '/api/payments/$paymentId/quote'
+    | '/api/payments/$paymentId/settlement'
     | '/api/payments/$paymentId/transfer'
     | '/api/payments/$paymentId/'
+    | '/api/payments/$paymentId/swaps/'
+    | '/api/payments/$paymentId/swaps/$swapId/confirm'
+    | '/api/payments/$paymentId/swaps/$swapId/execute'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -503,8 +555,12 @@ export interface RootRouteChildren {
   ApiPaymentsPaymentIdFundingRoute: typeof ApiPaymentsPaymentIdFundingRoute
   ApiPaymentsPaymentIdFundingTransactionRoute: typeof ApiPaymentsPaymentIdFundingTransactionRoute
   ApiPaymentsPaymentIdQuoteRoute: typeof ApiPaymentsPaymentIdQuoteRoute
+  ApiPaymentsPaymentIdSettlementRoute: typeof ApiPaymentsPaymentIdSettlementRoute
   ApiPaymentsPaymentIdTransferRoute: typeof ApiPaymentsPaymentIdTransferRoute
   ApiPaymentsPaymentIdIndexRoute: typeof ApiPaymentsPaymentIdIndexRoute
+  ApiPaymentsPaymentIdSwapsIndexRoute: typeof ApiPaymentsPaymentIdSwapsIndexRoute
+  ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute: typeof ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute
+  ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute: typeof ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -761,11 +817,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPaymentsPaymentIdQuoteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/payments/$paymentId/settlement': {
+      id: '/api/payments/$paymentId/settlement'
+      path: '/api/payments/$paymentId/settlement'
+      fullPath: '/api/payments/$paymentId/settlement'
+      preLoaderRoute: typeof ApiPaymentsPaymentIdSettlementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/payments/$paymentId/transfer': {
       id: '/api/payments/$paymentId/transfer'
       path: '/api/payments/$paymentId/transfer'
       fullPath: '/api/payments/$paymentId/transfer'
       preLoaderRoute: typeof ApiPaymentsPaymentIdTransferRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/payments/$paymentId/swaps/': {
+      id: '/api/payments/$paymentId/swaps/'
+      path: '/api/payments/$paymentId/swaps'
+      fullPath: '/api/payments/$paymentId/swaps/'
+      preLoaderRoute: typeof ApiPaymentsPaymentIdSwapsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/payments/$paymentId/swaps/$swapId/confirm': {
+      id: '/api/payments/$paymentId/swaps/$swapId/confirm'
+      path: '/api/payments/$paymentId/swaps/$swapId/confirm'
+      fullPath: '/api/payments/$paymentId/swaps/$swapId/confirm'
+      preLoaderRoute: typeof ApiPaymentsPaymentIdSwapsSwapIdConfirmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/payments/$paymentId/swaps/$swapId/execute': {
+      id: '/api/payments/$paymentId/swaps/$swapId/execute'
+      path: '/api/payments/$paymentId/swaps/$swapId/execute'
+      fullPath: '/api/payments/$paymentId/swaps/$swapId/execute'
+      preLoaderRoute: typeof ApiPaymentsPaymentIdSwapsSwapIdExecuteRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -833,8 +917,14 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPaymentsPaymentIdFundingTransactionRoute:
     ApiPaymentsPaymentIdFundingTransactionRoute,
   ApiPaymentsPaymentIdQuoteRoute: ApiPaymentsPaymentIdQuoteRoute,
+  ApiPaymentsPaymentIdSettlementRoute: ApiPaymentsPaymentIdSettlementRoute,
   ApiPaymentsPaymentIdTransferRoute: ApiPaymentsPaymentIdTransferRoute,
   ApiPaymentsPaymentIdIndexRoute: ApiPaymentsPaymentIdIndexRoute,
+  ApiPaymentsPaymentIdSwapsIndexRoute: ApiPaymentsPaymentIdSwapsIndexRoute,
+  ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute:
+    ApiPaymentsPaymentIdSwapsSwapIdConfirmRoute,
+  ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute:
+    ApiPaymentsPaymentIdSwapsSwapIdExecuteRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

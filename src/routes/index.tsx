@@ -105,10 +105,10 @@ function Hero() {
             Try SOL → USDC Swap Demo <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
-            to="/send"
+            to="/pay"
             className="inline-flex items-center gap-2 rounded-full bg-card border border-border px-6 py-3 font-semibold hover:bg-secondary transition"
           >
-            View Mock Fiat Payout Demo
+            Send a payment
           </Link>
           <Link
             to="/whitepaper"
@@ -182,9 +182,9 @@ function WhySection() {
     {
       icon: FileText,
       title: "Local-currency payouts",
-      desc: "Support for bank, mobile wallet, card, and cash pickup corridors.",
-      stat: "4",
-      statLabel: "rails",
+      desc: "Payouts go bank to bank, into the recipient's own account.",
+      stat: "Bank",
+      statLabel: "payouts",
     },
     {
       icon: ShieldCheck,
@@ -309,15 +309,11 @@ function AIAssistant() {
     const tokenMatch = input.match(/\b(USDC|USDT|SOL|JUP|RAY|PYTH|BONK)\b/i);
     const map: Record<string, [string, string]> = {
       pakistan: ["Pakistan", "PKR"],
-      india: ["India", "INR"],
       nigeria: ["Nigeria", "NGN"],
       philippines: ["Philippines", "PHP"],
       mexico: ["Mexico", "MXN"],
-      bangladesh: ["Bangladesh", "BDT"],
-      egypt: ["Egypt", "EGP"],
       colombia: ["Colombia", "COP"],
       brazil: ["Brazil", "BRL"],
-      peru: ["Peru", "PEN"],
     };
     const key = Object.keys(map).find((k) => input.toLowerCase().includes(k));
     const [country, currency] = key ? map[key] : ["Pakistan", "PKR"];
@@ -488,10 +484,10 @@ function FinalCTA() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3 justify-center">
             <Link
-              to="/send"
+              to="/pay"
               className="inline-flex items-center gap-2 rounded-full bg-white text-primary px-6 py-3 font-semibold hover:bg-white/90 transition"
             >
-              Start demo transfer <ArrowRight className="w-4 h-4" />
+              Send a payment <ArrowRight className="w-4 h-4" />
             </Link>
             <Link
               to="/contact"

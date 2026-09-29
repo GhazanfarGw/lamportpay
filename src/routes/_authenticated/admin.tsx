@@ -6,6 +6,7 @@ import { ShieldCheck, AlertTriangle, RefreshCw, Users, ScrollText, ArrowRight } 
 import { toast } from "sonner";
 
 import { AdminSignOutButton } from "@/components/site/AdminSignOutButton";
+import { BusinessSettingsAdmin } from "@/components/site/BusinessSettingsAdmin";
 import { SiteLayout } from "@/components/site/Layout";
 import { StablesPaymentsAdmin } from "@/components/site/StablesPaymentsAdmin";
 import { Button } from "@/components/ui/button";
@@ -361,6 +362,7 @@ function AdminPage() {
 
         {data?.isAdmin && (
           <>
+            <BusinessSettingsAdmin />
             <StablesPaymentsAdmin />
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-4">

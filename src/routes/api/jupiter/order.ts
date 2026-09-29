@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { SOL_MINT, USDC_MINT, isSupportedInputMint } from "@/lib/tokens";
+import { JupiterError } from "@/lib/jupiter/client.server";
+import { SwapOrderError, issueSwapOrder } from "@/lib/jupiter/swap-orders.server";
+import { authenticateUser } from "@/lib/payments/auth.server";
+import { USDC_MINT, isSupportedInputMint } from "@/lib/tokens";
 
 const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -39,16 +42,51 @@ const OrderInput = z
   })
   .strict();
 
+const NO_STORE = { "Cache-Control": "no-store" };
+
+function json(body: unknown, status = 200) {
+  return Response.json(body, { status, headers: NO_STORE });
+}
+
 function errorResponse(message: string, status: number) {
-  return Response.json({ error: message }, { status });
+  return json({ error: message }, status);
+}
+
+/** The signed-in user, or the 401 to send back. Anonymous callers never reach Jupiter. */
+async function requireUser(
+  request: Request,
+): Promise<{ userId: string; denied: null } | { userId: null; denied: Response }> {
+  try {
+    const auth = await authenticateUser(request);
+    if (!auth.denied) return { userId: auth.user.id, denied: null };
+    auth.denied.headers.set("Cache-Control", "no-store");
+    return { userId: null, denied: auth.denied };
+  } catch (error) {
+    console.error("[jupiter] sign-in check failed", error);
+    return {
+      userId: null,
+      denied: errorResponse("Sign-in could not be checked. Try again shortly.", 503),
+    };
+  }
+}
+
+/** A Jupiter or swap-order failure as an HTTP answer; Jupiter's own refusals are 502. */
+function failure(e: unknown): Response {
+  if (e instanceof SwapOrderError) return errorResponse(e.message, e.status);
+  if (e instanceof JupiterError) {
+    return errorResponse(e.message, e.status === 422 ? 502 : e.status);
+  }
+  console.error("[jupiter] unexpected failure", e);
+  return errorResponse("Swap service error. Try again shortly.", 500);
 }
 
 export const Route = createFileRoute("/api/jupiter/order")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const apiKey = process.env.JUPITER_API_KEY;
-        if (!apiKey) return errorResponse("Missing Jupiter API key.", 500);
+        const auth = await requireUser(request);
+        if (auth.denied) return auth.denied;
+        const userId = auth.userId;
 
         let body: unknown;
         try {
@@ -95,45 +133,15 @@ export const Route = createFileRoute("/api/jupiter/order")({
           return errorResponse("Maximum demo swap amount is 0.01 SOL.", 400);
         }
 
-        const url = new URL("https://api.jup.ag/swap/v2/order");
-        // Always forced: SOL in, USDC out, output owner = the connected wallet (taker).
-        url.searchParams.set("inputMint", SOL_MINT);
-        url.searchParams.set("outputMint", USDC_MINT);
-        url.searchParams.set("amount", amount);
-        url.searchParams.set("taker", taker);
+        if (!process.env["JUPITER_API_KEY"]) return errorResponse("Swaps are not configured.", 503);
 
-        let upstream: Response;
+        // Always SOL in, USDC out, output owner = the connected wallet (taker).
+        // The order is stored for this user; /execute relays only what was issued here.
         try {
-          upstream = await fetch(url, {
-            headers: { "x-api-key": apiKey, Accept: "application/json" },
-          });
-        } catch {
-          return errorResponse("Failed to reach Jupiter API.", 502);
+          return json(await issueSwapOrder({ userId, taker, lamports: BigInt(amount) }));
+        } catch (e) {
+          return failure(e);
         }
-
-        let payload: {
-          transaction?: string;
-          requestId?: string;
-          outAmount?: string;
-          lastValidBlockHeight?: number;
-          error?: string;
-        };
-        try {
-          payload = (await upstream.json()) as typeof payload;
-        } catch {
-          return errorResponse("Invalid response from Jupiter API.", 502);
-        }
-
-        if (!upstream.ok) {
-          return errorResponse(payload?.error ?? `Jupiter API error (${upstream.status}).`, 502);
-        }
-
-        return Response.json({
-          transaction: payload.transaction ?? null,
-          requestId: payload.requestId ?? null,
-          outAmount: payload.outAmount ?? null,
-          lastValidBlockHeight: payload.lastValidBlockHeight ?? null,
-        });
       },
     },
   },

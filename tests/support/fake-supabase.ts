@@ -33,6 +33,8 @@ const DEFAULTS: Record<string, () => Row> = {
     beneficiary_summary: null,
     deposit_address: null,
     deposit_amount_minor: null,
+    deposit_currency: null,
+    deposit_network: null,
     funding_signature: null,
     funding_payer: null,
     funding_verified_at: null,
@@ -40,6 +42,10 @@ const DEFAULTS: Record<string, () => Row> = {
     actual_payout_minor: null,
     actual_payout_currency: null,
     payer_wallet: null,
+    platform_fee_bps: null,
+    platform_fee_minor: null,
+    platform_fee_wallet: null,
+    platform_fee_received_minor: null,
     reconciled_at: null,
     travel_rule_reference: null,
     travel_rule_verification_url: null,
@@ -48,6 +54,15 @@ const DEFAULTS: Record<string, () => Row> = {
     travel_rule_resolved_at: null,
     created_at: now(),
     updated_at: now(),
+  }),
+  business_settings: () => ({
+    id: true,
+    conversion_fee_bps: null,
+    swap_fee_bps: null,
+    revenue_wallet: null,
+    enabled_currencies: null,
+    updated_at: now(),
+    updated_by: null,
   }),
   payment_events: () => ({ detail: null, from_status: null, to_status: null, created_at: now() }),
   stables_customers: () => ({
@@ -58,6 +73,31 @@ const DEFAULTS: Record<string, () => Row> = {
     kyc_link_expires_at: null,
     first_name: null,
     last_name: null,
+    created_at: now(),
+    updated_at: now(),
+  }),
+  payment_swaps: () => ({
+    id: randomUUID(),
+    status: "ordered",
+    slippage_bps: null,
+    price_impact_pct: null,
+    last_valid_block_height: null,
+    signature: null,
+    jupiter_status: null,
+    jupiter_error: null,
+    actual_in_minor: null,
+    actual_out_minor: null,
+    failure_reason: null,
+    created_at: now(),
+    updated_at: now(),
+  }),
+  jupiter_swap_orders: () => ({
+    id: randomUUID(),
+    status: "ordered",
+    relayed_at: null,
+    signature: null,
+    jupiter_status: null,
+    jupiter_error: null,
     created_at: now(),
     updated_at: now(),
   }),
@@ -75,9 +115,11 @@ const UNIQUE: Record<string, string[]> = {
   payment_events: ["id"],
   stables_customers: ["user_id", "stables_customer_id"],
   stables_webhook_events: ["event_id"],
+  payment_swaps: ["id", "jupiter_request_id", "signature"],
+  jupiter_swap_orders: ["id", "jupiter_request_id", "signature"],
 };
 
-const TOUCHES_UPDATED_AT = new Set(["payments", "stables_customers"]);
+const TOUCHES_UPDATED_AT = new Set(["payments", "stables_customers", "payment_swaps"]);
 
 type Filter = (row: Row) => boolean;
 
@@ -188,6 +230,21 @@ class Query implements PromiseLike<Result> {
           data: null,
           error: { code: "23505", message: `duplicate key value violates unique (${column})` },
         };
+      }
+    }
+    if (this.table === "payment_swaps") {
+      const others = this.rows().filter(
+        (r) => r !== self && r["payment_id"] === candidate["payment_id"],
+      );
+      if (others.some((r) => r["attempt"] === candidate["attempt"])) {
+        return {
+          data: null,
+          error: { code: "23505", message: "payment_swaps_payment_id_attempt_key" },
+        };
+      }
+      // Partial unique index: one in-flight (submitted) swap per payment.
+      if (candidate["status"] === "submitted" && others.some((r) => r["status"] === "submitted")) {
+        return { data: null, error: { code: "23505", message: "payment_swaps_one_in_flight" } };
       }
     }
     if (

@@ -25,8 +25,18 @@ vi.mock("@/lib/stables/client.server", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/solana-rpc.server", () => ({ rpc: vi.fn() }));
+// Wallet balances are read from mainnet; tests set them explicitly.
+vi.mock("@/lib/solana-balances.server", () => ({
+  readWalletHoldings: vi.fn(),
+  solReserveLamports: vi.fn(),
+  tokenAccountRentLamports: vi.fn(),
+  accountExists: vi.fn(),
+  solFeeReserveMarginLamports: vi.fn(),
+}));
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { clearBusinessSettingsCache, updateBusinessSettings } from "@/lib/business-settings.server";
+import * as balances from "@/lib/solana-balances.server";
 import * as ledger from "@/lib/payments/ledger.server";
 import * as service from "@/lib/payments/service.server";
 import { rpc } from "@/lib/solana-rpc.server";
@@ -54,6 +64,23 @@ import {
 const db = supabaseAdmin as unknown as FakeSupabase;
 const api = vi.mocked(stables);
 const rpcMock = vi.mocked(rpc);
+const wallets = vi.mocked(balances);
+
+/** Real-looking balances for `owner`: plenty of both coins and SOL unless told otherwise. */
+function holdings(
+  owner: string,
+  tokens: { usdc?: bigint; usdt?: bigint } = {},
+  solLamports = 1_000_000_000n,
+): balances.WalletHoldings {
+  return {
+    status: "ok",
+    owner,
+    slot: 1,
+    readAt: new Date().toISOString(),
+    solLamports,
+    tokens: { usdc: tokens.usdc ?? 1_000_000_000_000n, usdt: tokens.usdt ?? 1_000_000_000_000n },
+  };
+}
 
 const ENV_KEYS = [
   "STABLES_API_KEY",
@@ -67,10 +94,12 @@ const ENV_KEYS = [
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 const RETURN_URL = "https://lamportpay.test/pay?kyc=returned";
+const ID_NAME = { firstName: "Ada", lastName: "Lovelace" };
 let user: { id: string; email: string };
 
 beforeEach(() => {
   db.reset();
+  clearBusinessSettingsCache();
   vi.resetAllMocks();
   Object.assign(process.env, {
     STABLES_API_KEY: "sti_live_fixture",
@@ -83,6 +112,23 @@ beforeEach(() => {
     PAYMENT_MAX_USDT: "100",
   });
   user = { id: randomUUID(), email: "user@example.com" };
+  // A preview a test didn't set up gets Stables' real "no route" answer, as
+  // USDT did for most payouts in the sandbox: tests read as single-coin.
+  api.createQuote.mockRejectedValue(
+    new StablesError(
+      "No route is currently available for this transfer.",
+      422,
+      [],
+      "ROUTING_ROUTE_NOT_CONFIGURED",
+    ),
+  );
+  // The live transfer check before funding: still waiting for the deposit.
+  api.getTransfer.mockImplementation(async (_config, id) =>
+    transfer(id, newWallet(), "0", "awaiting_funds_collection"),
+  );
+  wallets.readWalletHoldings.mockImplementation(async (owner) => holdings(owner));
+  wallets.solReserveLamports.mockResolvedValue(5_000_000n);
+  wallets.tokenAccountRentLamports.mockResolvedValue(2_039_280n);
 });
 
 afterAll(() => {
@@ -114,9 +160,18 @@ function paymentRow(id: string) {
   return row;
 }
 
+/** The wallet the test user connects; it holds plenty unless a test says otherwise. */
+let userWallet = newWallet();
+
 async function createPayment(amount = "75") {
   api.createQuote.mockResolvedValueOnce(quote(amount, "inr", "6232.5"));
-  return service.createPayment(user, { amount, country: "in", currency: "INR" });
+  userWallet = newWallet();
+  return service.createPayment(user, {
+    amount,
+    country: "in",
+    currency: "INR",
+    wallet: userWallet,
+  });
 }
 
 /** Payment with a Stables customer whose KYC is still running. */
@@ -126,7 +181,7 @@ async function paymentAwaitingKyc(amount = "75") {
     customer_id: "cus_1",
     kyc_link: "https://kyc.example/1",
   });
-  await service.startKyc(user, { returnUrl: RETURN_URL });
+  await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
   return payment;
 }
 
@@ -190,7 +245,8 @@ describe("happy path", () => {
     const created = await createPayment("75");
     expect(created.status).toBe("PAYMENT_CREATED");
     expect(created.destination).toMatchObject({ country: "IN", currency: "inr", amount: "6232.5" });
-    expect(api.createQuote).toHaveBeenLastCalledWith(
+    // Every coin is priced; USDC answered, so USDC pays.
+    expect(api.createQuote).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         preview: true,
@@ -204,7 +260,7 @@ describe("happy path", () => {
       customer_id: "cus_1",
       kyc_link: "https://kyc.example/1",
     });
-    const kyc = await service.startKyc(user, { returnUrl: RETURN_URL });
+    const kyc = await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
     expect(kyc).toMatchObject({ status: "in_progress", kycLink: "https://kyc.example/1" });
     expect(paymentRow(created.id)["status"]).toBe("KYC_PENDING");
 
@@ -314,6 +370,24 @@ describe("destination support is decided by Stables", () => {
     expect(db.table("payments")).toHaveLength(0);
   });
 
+  it("does not call a route unsupported when Stables only failed to price it", async () => {
+    const message = "This transfer could not be priced right now. Please try again shortly.";
+    api.createQuote.mockRejectedValueOnce(
+      new StablesError(message, 422, [], "ROUTING_QUOTE_FAILED"),
+    );
+    await expect(
+      service.createPayment(user, { amount: "100", country: "in", currency: "INR" }),
+    ).rejects.toMatchObject({ status: 503, code: "quote_unavailable", extra: { reason: message } });
+
+    api.createQuote.mockRejectedValueOnce(
+      new StablesError("No route is currently available.", 422, [], "ROUTING_ROUTE_DISABLED"),
+    );
+    await expect(
+      service.createPayment(user, { amount: "100", country: "de", currency: "EUR" }),
+    ).rejects.toMatchObject({ code: "destination_not_supported" });
+    expect(db.table("payments")).toHaveLength(0);
+  });
+
   it("does not call an outage 'not supported'", async () => {
     api.createQuote.mockRejectedValueOnce(new StablesError("Service unavailable", 503));
     await expect(
@@ -418,6 +492,32 @@ describe("Stables refusing the amount", () => {
 
 // ---------------------------------------------------------------- customers
 
+describe("starting KYC", () => {
+  it("asks for both names before creating a Stables customer", async () => {
+    await expect(
+      service.startKyc(user, { firstName: "Ada", returnUrl: RETURN_URL }),
+    ).rejects.toMatchObject({ status: 400, code: "name_required" });
+    expect(api.createCustomerWithVerificationLink).not.toHaveBeenCalled();
+  });
+
+  it("sends the return URL only when it is https", async () => {
+    api.createCustomerWithVerificationLink.mockResolvedValue({
+      customer_id: "cus_1",
+      kyc_link: "https://kyc.example/1",
+    });
+    await service.startKyc(user, { ...ID_NAME, returnUrl: "http://localhost:8080/pay" });
+    expect(api.createCustomerWithVerificationLink.mock.lastCall![1]).not.toHaveProperty("redirect");
+
+    db.reset();
+    await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
+    expect(api.createCustomerWithVerificationLink.mock.lastCall![1]).toMatchObject({
+      first_name: "Ada",
+      last_name: "Lovelace",
+      redirect: { success_url: RETURN_URL, reject_url: RETURN_URL },
+    });
+  });
+});
+
 describe("customer creation conflict (409) recovery", () => {
   it("adopts the Stables customer that carries this user's id", async () => {
     api.createCustomerWithVerificationLink.mockRejectedValueOnce(
@@ -434,7 +534,7 @@ describe("customer creation conflict (409) recovery", () => {
       kyc_link: "https://kyc.example/9",
     });
 
-    const kyc = await service.startKyc(user, { returnUrl: RETURN_URL });
+    const kyc = await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
     expect(kyc).toMatchObject({ status: "in_progress", kycLink: "https://kyc.example/9" });
     expect(api.createVerificationLink).toHaveBeenCalledWith(
       expect.anything(),
@@ -453,7 +553,7 @@ describe("customer creation conflict (409) recovery", () => {
       customers: [customer("cus_9", "approved", user.id)],
     });
 
-    const kyc = await service.startKyc(user, { returnUrl: RETURN_URL });
+    const kyc = await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
     expect(kyc).toMatchObject({ status: "approved", basePayout: "approved", kycLink: null });
     expect(api.createVerificationLink).not.toHaveBeenCalled();
     expect(paymentRow(payment.id)["status"]).toBe("KYC_APPROVED");
@@ -464,7 +564,9 @@ describe("customer creation conflict (409) recovery", () => {
     api.listCustomers.mockResolvedValueOnce({
       customers: [customer("cus_x", "approved", "someone")],
     });
-    await expect(service.startKyc(user, { returnUrl: RETURN_URL })).rejects.toMatchObject({
+    await expect(
+      service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL }),
+    ).rejects.toMatchObject({
       status: 409,
       code: "stables_customer_conflict",
     });
@@ -795,6 +897,49 @@ describe("webhook endpoint", () => {
     expect(stored.find((e) => e["event_id"] === "evt_unknown")).toMatchObject({
       process_error: "Ignored virtual_account.created.",
     });
+  });
+});
+
+// ----------------------------------------------------------- KYC link events
+
+describe("KYC link events", () => {
+  /** A verified customer with a payment still waiting on KYC. */
+  async function approvedCustomerWithPayment() {
+    const payment = await paymentAwaitingKyc();
+    api.getCustomer.mockResolvedValue(customer("cus_1", "approved", user.id));
+    await deliver(kycEvent("cus_1", "VERIFICATION_APPROVED", "INDIVIDUAL_BASE"));
+    expect(paymentRow(payment.id)["status"]).toBe("KYC_APPROVED");
+    return payment;
+  }
+
+  it("does not reject a verified customer when a step-up level is rejected", async () => {
+    const payment = await approvedCustomerWithPayment();
+    await deliver(kycEvent("cus_1", "VERIFICATION_REJECTED", "INDIVIDUAL_PASSPORT"));
+    expect(db.table("stables_customers")[0]).toMatchObject({ verification_status: "approved" });
+    expect(paymentRow(payment.id)["status"]).toBe("KYC_APPROVED");
+    expect(await service.getKycStatus(user)).toMatchObject({ status: "approved" });
+  });
+
+  it("does not downgrade a verified customer when an older event is replayed", async () => {
+    await approvedCustomerWithPayment();
+    await deliver(kycEvent("cus_1", "VERIFICATION_IN_PROGRESS", "INDIVIDUAL_BASE"));
+    expect(db.table("stables_customers")[0]).toMatchObject({ verification_status: "approved" });
+  });
+
+  it("leaves a step-up event for a retry when Stables cannot be read", async () => {
+    await approvedCustomerWithPayment();
+    api.getCustomer.mockRejectedValue(new StablesError("Service unavailable", 503));
+    await deliver(kycEvent("cus_1", "VERIFICATION_REJECTED", "INDIVIDUAL_PASSPORT"));
+    expect(db.table("stables_customers")[0]).toMatchObject({ verification_status: "approved" });
+    expect(db.table("stables_webhook_events").at(-1)).toMatchObject({ processed_at: null });
+  });
+
+  it("applies a base-level rejection read back from Stables", async () => {
+    const payment = await paymentAwaitingKyc();
+    api.getCustomer.mockResolvedValue(customer("cus_1", "rejected", user.id));
+    await deliver(kycEvent("cus_1", "VERIFICATION_REJECTED", "INDIVIDUAL_BASE"));
+    expect(db.table("stables_customers")[0]).toMatchObject({ verification_status: "rejected" });
+    expect(paymentRow(payment.id)["status"]).toBe("KYC_REJECTED");
   });
 });
 
@@ -1146,22 +1291,33 @@ describe("payouts to the user's own account", () => {
 
 describe("USDT payments", () => {
   async function usdtQuoted() {
-    api.createQuote.mockResolvedValueOnce(
-      quote("75", "inr", "6232.5", {
-        source: { currency: "USDT", network: "solana", amount: "75" },
-      }),
-    );
+    // Previews run per coin, USDC first: no USDC route here, USDT is priced.
+    api.createQuote
+      .mockRejectedValueOnce(
+        new StablesError(
+          "No route is currently available for this transfer.",
+          422,
+          [],
+          "ROUTING_ROUTE_NOT_CONFIGURED",
+        ),
+      )
+      .mockResolvedValueOnce(
+        quote("75", "inr", "6232.5", {
+          source: { currency: "USDT", network: "solana", amount: "75" },
+        }),
+      );
     const created = await service.createPayment(user, {
       amount: "75",
       country: "IN",
       currency: "inr",
       sourceCurrency: "usdt",
+      wallet: newWallet(),
     });
     api.createCustomerWithVerificationLink.mockResolvedValueOnce({
       customer_id: "cus_1",
       kyc_link: "https://kyc.example/1",
     });
-    await service.startKyc(user, { returnUrl: RETURN_URL });
+    await service.startKyc(user, { ...ID_NAME, returnUrl: RETURN_URL });
     api.getCustomer.mockResolvedValue(customer("cus_1", "approved", user.id));
     api.createQuote.mockResolvedValueOnce(
       quote("75", "inr", "6232.5", {
@@ -1257,9 +1413,71 @@ describe("sandbox deposit simulation", () => {
   });
 });
 
+describe("sandbox deposit instructions", () => {
+  // What the Stables sandbox returns instead of a Solana address (2026-09-27).
+  const PLACEHOLDER = "sandbox:solana:45d790d05dc156bfb0e095e5a52f528c";
+
+  async function transferWith(depositAddress: string) {
+    const payment = await quotedPayment("75");
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", depositAddress, "75"));
+    return service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "FAMILY_MAINTENANCE",
+      beneficiary: BENEFICIARY,
+    });
+  }
+
+  it("records the sandbox placeholder as a reference, not as an address or a failure", async () => {
+    process.env["STABLES_API_KEY"] = "sti_test_fixture";
+    process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    const view = await transferWith(PLACEHOLDER);
+
+    expect(view).toMatchObject({ status: "AWAITING_FUNDS_COLLECTION", failureReason: null });
+    expect(view.deposit).toBeNull();
+    expect(paymentRow(view.id)["deposit_address"]).toBeNull();
+    const event = db
+      .table("payment_events")
+      .find((e) => e["to_status"] === "AWAITING_FUNDS_COLLECTION");
+    expect(event?.["detail"]).toMatchObject({ sandbox_deposit_reference: PLACEHOLDER });
+  });
+
+  it("still checks the placeholder's amount against the quote", async () => {
+    process.env["STABLES_API_KEY"] = "sti_test_fixture";
+    process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    const payment = await quotedPayment("75");
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", PLACEHOLDER, "76"));
+    const view = await service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "FAMILY_MAINTENANCE",
+      beneficiary: BENEFICIARY,
+    });
+    expect(view.failureReason).toMatch(/asks for 76 USDC, not the quoted 75 USDC/);
+  });
+
+  it("refuses the placeholder outside the sandbox", async () => {
+    const view = await transferWith(PLACEHOLDER);
+    expect(view.failureReason).toBe("The deposit address is not a valid Solana address.");
+    expect(view.deposit).toBeNull();
+  });
+});
+
 // ---------------------------------------------------- history and receipts
 
 describe("history and receipts", () => {
+  it("answers 404, not a database error, for a malformed payment ID", async () => {
+    await expect(service.getPaymentView(user, "undefined")).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+
+  it("dates the receipt when Stables completed the transfer, not when we noticed", async () => {
+    const { id, deposit } = await paymentAwaitingFunds();
+    const completedAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+    api.getTransfer.mockResolvedValueOnce(transfer("tr_1", deposit, "75", "completed"));
+    await deliver({ ...transferEvent("tr_1", "COMPLETED"), event_created_at: completedAt });
+    expect((await service.getPaymentView(user, id)).completedAt).toBe(completedAt);
+  });
+
   it("lists the user's payments and records the completion time for the receipt", async () => {
     const { id, deposit } = await paymentAwaitingFunds();
     api.getTransfer.mockResolvedValueOnce(
@@ -1290,5 +1508,128 @@ describe("history and receipts", () => {
       .table("payment_events")
       .find((e) => e["kind"] === "travel_rule_verification_required");
     expect(event?.["detail"]).toMatchObject({ matched_by: "payment_id" });
+  });
+});
+
+// ------------------------------------------------------ LamportPay's own fee
+
+describe("LamportPay fee (non-custodial split)", () => {
+  const REVENUE = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  const ADMIN = "00000000-0000-4000-8000-000000000001";
+
+  beforeEach(async () => {
+    await updateBusinessSettings({ conversionFeeBps: 200, revenueWallet: REVENUE }, ADMIN);
+  });
+
+  it("snapshots the fee with the quote and shows the total, never the wallet", async () => {
+    const quoted = await quotedPayment("75");
+    expect(quoted.platformFee).toEqual({
+      bps: 200,
+      amountMinor: "1500000",
+      amount: "1.5",
+      currency: "usdc",
+    });
+    expect(quoted.totalToPay).toMatchObject({ amount: "76.5", currency: "usdc" });
+    expect(JSON.stringify(quoted)).not.toContain(REVENUE);
+    expect(paymentRow(quoted.id)).toMatchObject({
+      platform_fee_bps: 200,
+      platform_fee_minor: 1_500_000,
+      platform_fee_wallet: REVENUE,
+    });
+
+    // A later change applies to new quotes only, never to this payment's transfer.
+    await updateBusinessSettings({ conversionFeeBps: 100 }, ADMIN);
+    expect(paymentRow(quoted.id)["platform_fee_minor"]).toBe(1_500_000);
+  });
+
+  it("needs the amount plus the fee in the wallet before paying", async () => {
+    const { id } = await paymentAwaitingFunds("75");
+    const payer = newWallet();
+    wallets.readWalletHoldings.mockResolvedValueOnce(holdings(payer, { usdc: 75_000_000n }));
+    await expect(service.buildFundingTransaction(user, id, payer)).rejects.toMatchObject({
+      code: "insufficient_balance",
+      message: expect.stringMatching(/needs 76\.5 USDC including the LamportPay fee/),
+    });
+  });
+
+  it("builds one transaction: exact deposit to Stables plus the fee to the revenue wallet", async () => {
+    const { id, deposit } = await paymentAwaitingFunds("75");
+    const payer = newWallet();
+    mockBlockhash();
+    const built = await service.buildFundingTransaction(user, id, payer);
+    expect(built).toMatchObject({ amount: "75", platformFee: "1.5", total: "76.5" });
+    expect(wallets.solReserveLamports).toHaveBeenLastCalledWith(
+      expect.objectContaining({ depositOwner: deposit, feeOwner: REVENUE }),
+    );
+
+    const { Transaction } = await import("@solana/web3.js");
+    const tx = Transaction.from(Buffer.from(built.transaction, "base64"));
+    const transfers = tx.instructions.filter((i) => i.data[0] === 12 && i.data.length === 10);
+    expect(transfers.map((i) => i.data.readBigUInt64LE(1))).toEqual([75_000_000n, 1_500_000n]);
+    // Every transfer is signed by the user's own wallet; the server signs nothing.
+    expect(tx.signatures.every((s) => s.signature === null)).toBe(true);
+    expect(tx.feePayer?.toBase58()).toBe(payer);
+  });
+
+  it("verifies the deposit and records the fee received", async () => {
+    const { id, deposit } = await paymentAwaitingFunds("75");
+    const payer = newWallet();
+    mockBlockhash();
+    await service.buildFundingTransaction(user, id, payer);
+    rpcMock.mockResolvedValueOnce({
+      ok: true,
+      result: usdcTransferTx({
+        from: payer,
+        to: deposit,
+        amount: 75_000_000n,
+        fee: { to: REVENUE, amount: 1_500_000n },
+      }),
+    });
+    const signature = fakeSignature();
+    const funded = await service.verifyFunding(user, id, signature);
+    expect(funded).toMatchObject({ pending: false });
+    expect(paymentRow(id)["platform_fee_received_minor"]).toBe(1_500_000);
+    const kinds = db.table("payment_events").map((e) => e["kind"]);
+    expect(kinds).not.toContain("platform_fee_mismatch");
+  });
+
+  it("never blocks a deposit that reached Stables without the fee; flags it instead", async () => {
+    const { id, deposit } = await paymentAwaitingFunds("75");
+    const payer = newWallet();
+    mockBlockhash();
+    await service.buildFundingTransaction(user, id, payer);
+    rpcMock.mockResolvedValueOnce({
+      ok: true,
+      result: usdcTransferTx({ from: payer, to: deposit, amount: 75_000_000n }),
+    });
+    const funded = await service.verifyFunding(user, id, fakeSignature());
+    expect(funded).toMatchObject({ pending: false });
+    expect(paymentRow(id)["platform_fee_received_minor"]).toBe(0);
+    const mismatch = db.table("payment_events").find((e) => e["kind"] === "platform_fee_mismatch");
+    expect(mismatch?.["detail"]).toMatchObject({ expected_minor: "1500000", received_minor: "0" });
+  });
+});
+
+describe("payment coins turned off", () => {
+  it("refuses USDT when only USDC is on, and prices USDC only", async () => {
+    await updateBusinessSettings(
+      { enabledCurrencies: ["usdc"] },
+      "00000000-0000-4000-8000-000000000001",
+    );
+    await expect(
+      service.createPayment(user, {
+        amount: "75",
+        country: "IN",
+        currency: "inr",
+        preferredCurrency: "usdt",
+        wallet: newWallet(),
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "currency_disabled" });
+
+    await createPayment("75");
+    const previews = api.createQuote.mock.calls.map(
+      (c) => (c[1] as { source: { currency: string } }).source.currency,
+    );
+    expect(previews).toEqual(["usdc"]);
   });
 });

@@ -3,6 +3,7 @@
  * (JSON has no bigint); `amount` fields are major-unit strings for display.
  */
 import { toMajor } from "@/lib/money";
+import { PAYMENT_CURRENCY_MINTS, SOL_MINT } from "@/lib/tokens";
 import { isPaymentState, isTerminal, type PaymentState } from "./state";
 
 export type FeeLine = { kind: string; amountMinor: string; amount: string; currency: string };
@@ -29,6 +30,14 @@ export type PaymentView = {
   };
   exchangeRate: number | null;
   fees: FeeLine[];
+  /**
+   * LamportPay's own fee, added on top of what Stables receives and paid in the
+   * same transaction. Null when the payment carries none. The revenue wallet is
+   * deliberately not part of the view.
+   */
+  platformFee: { bps: number; amountMinor: string; amount: string; currency: string } | null;
+  /** What leaves the wallet in total: the Stables amount plus LamportPay's fee. */
+  totalToPay: { amountMinor: string; amount: string; currency: string };
   quote: { id: string; expiresAt: string | null } | null;
   transferId: string | null;
   deposit: {
@@ -59,7 +68,63 @@ export type PaymentView = {
   depositIssue: { received: string; expected: string; reason: string; at: string } | null;
   /** An admin simulated the deposit (sandbox), so there is no Solana transaction. */
   simulatedDeposit: boolean;
+  /** The latest settlement check: which coin pays, and whether a swap is needed. */
+  settlement: SettlementView | null;
+  /** The most recent swap attempt, if any. */
+  latestSwap: SwapView | null;
+  /**
+   * While the payout partner is converting and paying out: the usual time to
+   * reach the bank, in minutes (configured estimate, not a promise). Null
+   * otherwise. The actual step times are in `events`.
+   */
+  payoutEstimateMinutes: number | null;
   events: PaymentEventView[];
+};
+
+/** One coin's answer from Stables in a settlement check. */
+export type SettlementCandidateView = {
+  coin: string;
+  verdict: string;
+  /** Payout for this coin, when Stables priced it. */
+  destinationAmount: string | null;
+  /** Why it can't be used, when it can't. */
+  reason: string | null;
+};
+
+export type SettlementView = {
+  /** funds_ready, swap_required, tentative, needs_sol, insufficient_funds. */
+  kind: string;
+  coin: string | null;
+  /** One plain sentence for the user. */
+  reason: string;
+  checkedAt: string;
+  wallet: string | null;
+  preference: string;
+  /** Real balances read for `wallet` (major units), or why they couldn't be read. */
+  holdings:
+    | { status: "ok"; sol: string; tokens: Record<string, string>; readAt: string | null }
+    | { status: "unavailable"; reason: string }
+    | null;
+  candidates: SettlementCandidateView[];
+  /** Missing amount of `coin` when a swap is needed or funds are short. */
+  shortfall: string | null;
+  swapInputs: Array<{ asset: string; available: string }>;
+  solNeeded: string | null;
+};
+
+export type SwapView = {
+  id: string;
+  attempt: number;
+  /** ordered, submitted, landed, failed, expired, abandoned. */
+  status: string;
+  inputAsset: string;
+  outputAsset: string;
+  inAmount: string;
+  minOut: string;
+  actualOut: string | null;
+  signature: string | null;
+  failureReason: string | null;
+  createdAt: string;
 };
 
 /** `payments.beneficiary_summary`: never the full account number. */
@@ -167,11 +232,17 @@ type Row = {
   destination_amount_minor: number | null;
   exchange_rate: number | null;
   fees: unknown;
+  /** LamportPay's fee snapshot (absent on older rows). */
+  platform_fee_bps?: number | null;
+  platform_fee_minor?: number | null;
   quote_id: string | null;
   quote_expires_at: string | null;
   transfer_id: string | null;
   deposit_address: string | null;
   deposit_amount_minor: number | null;
+  /** Stables' own coin and network for the deposit (absent on older rows). */
+  deposit_currency?: string | null;
+  deposit_network?: string | null;
   funding_signature: string | null;
   funding_payer: string | null;
   funding_verified_at: string | null;
@@ -192,6 +263,133 @@ type EventRow = {
   /** Used to derive fields below; never sent to the browser as is. */
   detail?: unknown;
 };
+
+/**
+ * When the payment completed: Stables' own time for the transfer reaching
+ * COMPLETED (`detail.stables_at`, recorded by webhooks and reconciliation),
+ * else when we recorded it. Reconciliation can notice hours later.
+ */
+function completedAtOf(events: EventRow[]): string | null {
+  const completed = [...events]
+    .reverse()
+    .find((e) => e.kind === "transition" && e.to_status === "COMPLETED");
+  if (!completed) return null;
+  const stablesAt = (completed.detail as { stables_at?: unknown } | null)?.stables_at;
+  return typeof stablesAt === "string" && Number.isFinite(Date.parse(stablesAt))
+    ? stablesAt
+    : completed.created_at;
+}
+
+const MINT_ASSETS: Record<string, string> = {
+  [SOL_MINT]: "sol",
+  ...Object.fromEntries(Object.entries(PAYMENT_CURRENCY_MINTS).map(([coin, mint]) => [mint, coin])),
+};
+
+/** Minor-unit string as a major amount of `asset` ("" when unreadable). */
+function major(minor: unknown, asset: string): string {
+  if (typeof minor !== "string" && typeof minor !== "number") return "";
+  const text = String(minor);
+  if (!/^\d+$/.test(text)) return "";
+  try {
+    return toMajor(BigInt(text), asset);
+  } catch {
+    return "";
+  }
+}
+
+/** A `payment_swaps` row, as far as the browser needs it. */
+type SwapRowLike = {
+  id: string;
+  attempt: number;
+  status: string;
+  input_mint: string;
+  output_mint: string;
+  in_amount_minor: number;
+  min_out_minor: number;
+  actual_out_minor: number | null;
+  signature: string | null;
+  failure_reason: string | null;
+  created_at: string;
+};
+
+export function toSwapView(row: SwapRowLike): SwapView {
+  const input = MINT_ASSETS[row.input_mint] ?? "unknown";
+  const output = MINT_ASSETS[row.output_mint] ?? "unknown";
+  return {
+    id: row.id,
+    attempt: row.attempt,
+    status: row.status,
+    inputAsset: input,
+    outputAsset: output,
+    inAmount: major(row.in_amount_minor, input === "unknown" ? "usdc" : input),
+    minOut: major(row.min_out_minor, output === "unknown" ? "usdc" : output),
+    actualOut:
+      row.actual_out_minor === null
+        ? null
+        : major(row.actual_out_minor, output === "unknown" ? "usdc" : output),
+    signature: row.signature,
+    failureReason: row.failure_reason,
+    createdAt: row.created_at,
+  };
+}
+
+const SETTLEMENT_EVENTS = new Set(["settlement_selected", "settlement_changed"]);
+
+/** The latest settlement check, from the detail `settlement.server.ts` records. */
+function settlementOf(events: EventRow[], payoutCurrency: string): SettlementView | null {
+  const last = [...events].reverse().find((e) => SETTLEMENT_EVENTS.has(e.kind));
+  const d = (last?.detail ?? null) as Record<string, unknown> | null;
+  if (!last || !d) return null;
+  const coin = typeof d["coin"] === "string" ? d["coin"] : null;
+  const asset = coin ?? "usdc";
+  const h = d["holdings"] as Record<string, unknown> | null | undefined;
+  const holdings: SettlementView["holdings"] = !h
+    ? null
+    : h["status"] === "ok"
+      ? {
+          status: "ok",
+          sol: major(h["sol_lamports"], "sol"),
+          tokens: Object.fromEntries(
+            Object.entries((h["tokens"] ?? {}) as Record<string, unknown>).map(([c, v]) => [
+              c,
+              major(v, c),
+            ]),
+          ),
+          readAt: typeof h["read_at"] === "string" ? h["read_at"] : null,
+        }
+      : { status: "unavailable", reason: typeof h["reason"] === "string" ? h["reason"] : "" };
+  const candidates = Array.isArray(d["candidates"])
+    ? (d["candidates"] as Array<Record<string, unknown>>).map((c) => ({
+        coin: String(c["coin"] ?? ""),
+        verdict: String(c["verdict"] ?? ""),
+        destinationAmount:
+          c["destination_amount_minor"] !== undefined
+            ? major(c["destination_amount_minor"], payoutCurrency) || null
+            : null,
+        reason: typeof c["reason"] === "string" ? c["reason"] : null,
+      }))
+    : [];
+  const inputs = Array.isArray(d["swap_inputs"])
+    ? (d["swap_inputs"] as Array<Record<string, unknown>>).map((i) => ({
+        asset: String(i["asset"] ?? ""),
+        available: major(i["available_minor"], String(i["asset"] ?? "usdc")),
+      }))
+    : [];
+  return {
+    kind: typeof d["kind"] === "string" ? d["kind"] : "unknown",
+    coin,
+    reason: typeof d["reason"] === "string" ? d["reason"] : "",
+    checkedAt: typeof d["checked_at"] === "string" ? d["checked_at"] : last.created_at,
+    wallet: typeof d["wallet"] === "string" ? d["wallet"] : null,
+    preference: typeof d["preference"] === "string" ? d["preference"] : "auto",
+    holdings,
+    candidates,
+    shortfall: d["shortfall_minor"] !== undefined ? major(d["shortfall_minor"], asset) : null,
+    swapInputs: inputs,
+    solNeeded:
+      d["sol_needed_lamports"] !== undefined ? major(d["sol_needed_lamports"], "sol") : null,
+  };
+}
 
 function amounts(minor: number | null, currency: string) {
   if (minor === null) return { amountMinor: null, amount: null };
@@ -258,10 +456,20 @@ export function toPaymentListItem(row: Row): PaymentListItem {
   };
 }
 
-export function toPaymentView(row: Row, events: EventRow[] = []): PaymentView {
+export function toPaymentView(
+  row: Row,
+  events: EventRow[] = [],
+  swaps: SwapRowLike[] = [],
+): PaymentView {
   const status = isPaymentState(row.status) ? row.status : "FAILED";
   const source = amounts(row.source_amount_minor, row.source_currency);
   const fees = (row.fees ?? {}) as StoredFees;
+  // Stables' deposit instructions decide the coin and network once a transfer exists.
+  const depositCurrency = row.deposit_currency ?? row.source_currency;
+  const latest = [...swaps].sort((a, b) => b.attempt - a.attempt)[0];
+  // The fee is charged in the coin that pays (the deposit coin once known).
+  const feeMinor = BigInt(row.platform_fee_minor ?? 0);
+  const payMinor = BigInt(row.deposit_amount_minor ?? row.source_amount_minor) + feeMinor;
 
   return {
     id: row.id,
@@ -286,16 +494,30 @@ export function toPaymentView(row: Row, events: EventRow[] = []): PaymentView {
       amountMinor: String(fee.amount_minor),
       amount: toMajor(BigInt(fee.amount_minor), fee.currency),
     })),
+    platformFee:
+      feeMinor > 0n
+        ? {
+            bps: row.platform_fee_bps ?? 0,
+            amountMinor: feeMinor.toString(),
+            amount: toMajor(feeMinor, depositCurrency),
+            currency: depositCurrency,
+          }
+        : null,
+    totalToPay: {
+      amountMinor: payMinor.toString(),
+      amount: toMajor(payMinor, depositCurrency),
+      currency: depositCurrency,
+    },
     quote: row.quote_id ? { id: row.quote_id, expiresAt: row.quote_expires_at } : null,
     transferId: row.transfer_id,
     deposit:
       row.deposit_address && row.deposit_amount_minor !== null
         ? {
             address: row.deposit_address,
-            currency: row.source_currency,
-            network: row.source_network,
+            currency: depositCurrency,
+            network: row.deposit_network ?? row.source_network,
             amountMinor: String(row.deposit_amount_minor),
-            amount: toMajor(BigInt(row.deposit_amount_minor), row.source_currency),
+            amount: toMajor(BigInt(row.deposit_amount_minor), depositCurrency),
           }
         : null,
     funding: row.funding_signature
@@ -320,11 +542,12 @@ export function toPaymentView(row: Row, events: EventRow[] = []): PaymentView {
     purposeCode: row.purpose_code,
     failureReason: row.failure_reason,
     travelRule: toTravelRuleView(row),
-    completedAt:
-      [...events].reverse().find((e) => e.kind === "transition" && e.to_status === "COMPLETED")
-        ?.created_at ?? null,
+    completedAt: completedAtOf(events),
     depositIssue: depositIssueOf(row, events),
     simulatedDeposit: events.some((e) => e.kind === "sandbox_deposit_simulated"),
+    settlement: settlementOf(events, row.destination_currency),
+    latestSwap: latest ? toSwapView(latest) : null,
+    payoutEstimateMinutes: null,
     events: events.map((e) => ({
       at: e.created_at,
       kind: e.kind,

@@ -57,7 +57,7 @@ export const post: BlogPost = {
     { type: "p", text: "LamportPay's transfer demo follows this structure. Rates shown are indicative and labelled, fees are itemised, and each step carries its capability status — the SOL-to-USDC conversion runs live against Solana under strict limits with output returning to the user's own wallet, while identity checks, fiat conversion and local payout are simulated pending a regulated payout infrastructure partner." },
   ],
   productLinks: [
-    { to: "/send", label: "Transfer demo", note: "See the itemised quote, indicative rate labels and receipt structure." },
+    { to: "/pay", label: "Send a payment", note: "See the itemised quote, indicative rate labels and receipt structure." },
     { to: "/how-it-works", label: "How it works", note: "The route behind each quote line, step by step." },
     { to: "/compliance", label: "Compliance position", note: "Who holds funds at each stage, stated plainly." },
   ],

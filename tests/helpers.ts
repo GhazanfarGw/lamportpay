@@ -15,6 +15,16 @@ export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** Well-known burn address — valid base58, used only as a routing taker. */
 export const TEST_TAKER = "11111111111111111111111111111111";
 
+/**
+ * A signed-in user's Supabase access token for the dev project, for the routes
+ * that refuse anonymous callers. Tests that need it are skipped without it.
+ */
+export const E2E_TOKEN = process.env["E2E_ACCESS_TOKEN"]?.trim() || undefined;
+
+/** A well-formed JWT that no Supabase project issued. */
+export const FORGED_TOKEN =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmb3JnZWQifQ.c2lnbmF0dXJlLWZvcmdlZA";
+
 export const MIN_LAMPORTS = "1000000"; // 0.001 SOL
 export const MAX_LAMPORTS = "10000000"; // 0.01 SOL
 
@@ -26,13 +36,14 @@ export type ApiResult<T = Record<string, unknown>> = {
 
 export async function api<T = Record<string, unknown>>(
   path: string,
-  init?: { method?: string; body?: unknown; headers?: Record<string, string> },
+  init?: { method?: string; body?: unknown; headers?: Record<string, string>; token?: string },
 ): Promise<ApiResult<T>> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: init?.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...(init?.token ? { Authorization: `Bearer ${init.token}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...(init?.body !== undefined

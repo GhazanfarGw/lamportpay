@@ -8,6 +8,8 @@
 const EXPONENTS: Record<string, number> = {
   usdc: 6,
   usdt: 6,
+  // Lamports: only for showing network-fee shortfalls, never a payout currency.
+  sol: 9,
   aed: 2,
   ars: 2,
   aud: 2,

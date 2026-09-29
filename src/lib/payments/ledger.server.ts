@@ -171,6 +171,29 @@ export async function transitionPayment(
   throw new Error(`Payment ${paymentId} kept changing concurrently.`);
 }
 
+/**
+ * Update fields while the payment is still in `expected` and has no quote yet
+ * (the settlement coin can only change before a firm quote exists).
+ */
+export async function updatePaymentBeforeQuote(
+  paymentId: string,
+  expected: PaymentState,
+  patch: PaymentUpdate,
+  event: { kind: string; source: EventSource; detail?: Json },
+): Promise<PaymentRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payments")
+    .update(patch)
+    .eq("id", paymentId)
+    .eq("status", expected)
+    .is("quote_id", null)
+    .select("*")
+    .maybeSingle();
+  if (error) fail("Update payment", error);
+  if (data) await recordEvent(paymentId, event.kind, event.source, { detail: event.detail });
+  return data;
+}
+
 /** Update fields without a status change, only while the payment is still in `expected`. */
 export async function updatePaymentIfStatus(
   paymentId: string,
@@ -537,5 +560,131 @@ export async function listUnprocessedEventsFor(objectId: string) {
     .is("processed_at", null)
     .order("received_at", { ascending: true });
   if (error) fail("Load pending events", error);
+  return data;
+}
+
+// ------------------------------------------------------------------- swaps
+
+export type SwapRow = Tables["payment_swaps"]["Row"];
+export type SwapStatus = "ordered" | "submitted" | "landed" | "failed" | "expired" | "abandoned";
+export const FINAL_SWAP_STATUSES: readonly SwapStatus[] = [
+  "landed",
+  "failed",
+  "expired",
+  "abandoned",
+];
+
+/** A payment's swap attempts, newest first. */
+export async function listSwaps(paymentId: string): Promise<SwapRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_swaps")
+    .select("*")
+    .eq("payment_id", paymentId)
+    .order("attempt", { ascending: false });
+  if (error) fail("Load swaps", error);
+  return data;
+}
+
+export async function getSwap(paymentId: string, swapId: string): Promise<SwapRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_swaps")
+    .select("*")
+    .eq("id", swapId)
+    .eq("payment_id", paymentId)
+    .maybeSingle();
+  if (error) fail("Load swap", error);
+  return data;
+}
+
+/** The swap of this payment that was signed and relayed but has no final outcome yet. */
+export async function currentInFlightSwap(paymentId: string): Promise<SwapRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_swaps")
+    .select("*")
+    .eq("payment_id", paymentId)
+    .eq("status", "submitted")
+    .maybeSingle();
+  if (error) fail("Load in-flight swap", error);
+  return data;
+}
+
+/**
+ * Store a new Jupiter order as the payment's next attempt. Earlier orders the
+ * user never signed are abandoned first: only the newest order can be signed.
+ */
+export async function insertSwapOrder(
+  row: Omit<Tables["payment_swaps"]["Insert"], "attempt" | "status">,
+): Promise<SwapRow> {
+  const { error: abandonError } = await supabaseAdmin
+    .from("payment_swaps")
+    .update({ status: "abandoned", failure_reason: "Replaced by a newer order." })
+    .eq("payment_id", row.payment_id)
+    .eq("status", "ordered");
+  if (abandonError) fail("Abandon earlier swap orders", abandonError);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [latest] = await listSwaps(row.payment_id);
+    const { data, error } = await supabaseAdmin
+      .from("payment_swaps")
+      .insert({ ...row, attempt: (latest?.attempt ?? 0) + 1, status: "ordered" })
+      .select("*")
+      .single();
+    if (!error && data) return data;
+    // Two orders raced for the same attempt number: take the next one.
+    if (error?.code !== UNIQUE_VIOLATION || error.message.includes("jupiter_request_id")) {
+      fail("Store swap order", error);
+    }
+  }
+  throw new Error(`Swap orders for payment ${row.payment_id} kept colliding.`);
+}
+
+export type SwapSubmitWrite =
+  | { status: "submitted"; swap: SwapRow }
+  | { status: "in_flight" }
+  | { status: "not_ordered" }
+  | { status: "signature_taken" };
+
+/**
+ * ordered → submitted, with the signature of the user-signed transaction. The
+ * partial unique index on (payment_id) where status = 'submitted' makes this
+ * the in-flight lock: a second swap of the same payment cannot be relayed.
+ */
+export async function markSwapSubmitted(
+  swapId: string,
+  signature: string,
+): Promise<SwapSubmitWrite> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_swaps")
+    .update({ status: "submitted", signature })
+    .eq("id", swapId)
+    .eq("status", "ordered")
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) {
+      return error.message.includes("signature")
+        ? { status: "signature_taken" }
+        : { status: "in_flight" };
+    }
+    fail("Submit swap", error);
+  }
+  if (!data) return { status: "not_ordered" };
+  return { status: "submitted", swap: data };
+}
+
+/** Record an outcome, only while the swap is still in one of `from`. Null when it moved on. */
+export async function markSwapOutcome(
+  swapId: string,
+  from: readonly SwapStatus[],
+  patch: Tables["payment_swaps"]["Update"] & { status?: SwapStatus },
+): Promise<SwapRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_swaps")
+    .update(patch)
+    .eq("id", swapId)
+    .in("status", [...from])
+    .select("*")
+    .maybeSingle();
+  if (error) fail("Update swap", error);
   return data;
 }

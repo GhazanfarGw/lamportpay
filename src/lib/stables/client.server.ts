@@ -32,6 +32,8 @@ export class StablesError extends Error {
     readonly fields: Array<{ field: string; message: string }> = [],
     /** Stables' machine-readable error code, when it sends one. */
     readonly code?: string,
+    /** Stables' x-correlation-id for this response: what its support asks for. */
+    readonly correlationId?: string,
   ) {
     super(message);
     this.name = "StablesError";
@@ -120,7 +122,8 @@ async function request<T>(
           : `Stables request failed (${response.status}).`;
     const fields = Array.isArray(body.fields) ? (body.fields as StablesError["fields"]) : [];
     const code = typeof body.code === "string" ? body.code : undefined;
-    lastError = new StablesError(message, response.status, fields, code);
+    const correlationId = response.headers.get("x-correlation-id") ?? undefined;
+    lastError = new StablesError(message, response.status, fields, code, correlationId);
     if (!RETRYABLE.has(response.status)) break;
   }
   throw lastError ?? new StablesError("Stables request failed.", 0);

@@ -8,7 +8,7 @@ export type Block =
   | { type: "quote"; text: string };
 
 export type ProductLink = {
-  to: "/send" | "/swap" | "/how-it-works" | "/workflow" | "/whitepaper" | "/compliance" | "/docs" | "/contact";
+  to: "/pay" | "/swap" | "/how-it-works" | "/workflow" | "/whitepaper" | "/compliance" | "/docs" | "/contact";
   label: string;
   note: string;
 };

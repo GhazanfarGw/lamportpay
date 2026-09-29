@@ -18,7 +18,7 @@ function BrandLogo({ className = "" }: { className?: string }) {
 }
 
 const nav = [
-  { to: "/send", label: "Send" },
+  { to: "/pay", label: "Pay" },
   { to: "/how-it-works", label: "How it works" },
   { to: "/workflow", label: "Workflow" },
   { to: "/whitepaper", label: "White paper" },
@@ -34,7 +34,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
   const showHeaderWallet = pathname !== "/swap";
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-40 backdrop-blur-lg bg-background/75 border-b border-border/60">
+      <header className="sticky top-0 z-40 backdrop-blur-lg bg-background/75 border-b border-border/60 print:hidden">
         <div className="max-w-7xl mx-auto px-5 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center group" aria-label="LamportPay home">
             <BrandLogo />
@@ -70,10 +70,10 @@ export function SiteLayout({ children }: { children: ReactNode }) {
               ))}
             </div>
             <Link
-              to="/send"
+              to="/pay"
               className="px-4 py-2 text-sm font-medium rounded-full bg-foreground text-background hover:opacity-90 transition"
             >
-              Start demo
+              Send a payment
             </Link>
           </div>
           <button
@@ -103,11 +103,11 @@ export function SiteLayout({ children }: { children: ReactNode }) {
                 </Link>
               ))}
               <Link
-                to="/send"
+                to="/pay"
                 onClick={() => setOpen(false)}
                 className="mt-2 px-4 py-2 text-center text-sm font-medium rounded-full bg-foreground text-background"
               >
-                Start demo
+                Send a payment
               </Link>
               <div className="mt-3 flex items-center gap-2">
                 {socialLinks.map(({ label, href, icon: Icon }) => (
@@ -143,7 +143,7 @@ const contactEmail = "hello@lamportpay.com";
 
 function SiteFooter() {
   return (
-    <footer className="border-t border-border/60 mt-24 bg-secondary/40">
+    <footer className="border-t border-border/60 mt-24 bg-secondary/40 print:hidden">
       <div className="max-w-7xl mx-auto px-5 py-12 grid gap-10 md:grid-cols-4">
         <div className="md:col-span-2">
           <BrandLogo className="mb-3" />
@@ -184,8 +184,8 @@ function SiteFooter() {
           <div className="text-sm font-semibold mb-3">Product</div>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li>
-              <Link to="/send" className="hover:text-foreground">
-                Send demo
+              <Link to="/pay" className="hover:text-foreground">
+                Send a payment
               </Link>
             </li>
             <li>
@@ -248,7 +248,6 @@ function SiteFooter() {
           </div>
         </div>
       </div>
-
     </footer>
   );
 }

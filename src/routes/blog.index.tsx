@@ -166,10 +166,10 @@ function BlogIndex() {
               How it works
             </Link>
             <Link
-              to="/send"
+              to="/pay"
               className="rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-card"
             >
-              Transfer demo
+              Send a payment
             </Link>
             <Link
               to="/docs"

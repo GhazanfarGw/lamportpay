@@ -5,7 +5,6 @@ import { canonical } from "@/lib/seo";
 
 const STATIC_PAGES: { path: string; priority: string; changefreq: string }[] = [
   { path: "/", priority: "1.0", changefreq: "weekly" },
-  { path: "/send", priority: "0.9", changefreq: "monthly" },
   { path: "/swap", priority: "0.8", changefreq: "monthly" },
   { path: "/how-it-works", priority: "0.8", changefreq: "monthly" },
   { path: "/workflow", priority: "0.7", changefreq: "monthly" },

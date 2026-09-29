@@ -1,30 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Route as RouteIcon, RefreshCw, ToggleLeft, ToggleRight, Info } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Route as RouteIcon, RefreshCw, Info } from "lucide-react";
 
-import {
-  buildMockRoutePreview,
-  solToLamports,
-  type SwapRoutePreview as Preview,
-} from "@/lib/swap-route";
+import { supabase } from "@/integrations/supabase/client";
+import { solToLamports, type SwapRoutePreview as Preview } from "@/lib/swap-route";
 import { SOL_MINT, USDC_MINT } from "@/lib/tokens";
 
 const MIN_SOL = 0.001;
 const MAX_SOL = 0.01;
-
-function ModeBadge({ source }: { source: Preview["source"] }) {
-  const sandbox = source === "sandbox";
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-        sandbox
-          ? "bg-primary/10 text-primary border border-primary/20"
-          : "bg-muted text-muted-foreground border border-border/60"
-      }`}
-    >
-      {sandbox ? "Sandbox data" : "Mock data"}
-    </span>
-  );
-}
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -35,88 +18,69 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
+const fmtUsd = (n: number | null) => (n === null ? "n/a" : `$${n.toFixed(n < 1 ? 4 : 2)}`);
+
+/**
+ * Live, read-only swap route from Jupiter for a signed-in user. There is no
+ * mock mode: when Jupiter can't route, the card shows the error, never
+ * invented numbers.
+ */
 export function SwapRoutePreviewCard({ defaultSol = MIN_SOL }: { defaultSol?: number }) {
-  const [jupiterMode, setJupiterMode] = useState(false);
   const [sol, setSol] = useState(String(defaultSol));
-  const [preview, setPreview] = useState<Preview>(() =>
-    buildMockRoutePreview(solToLamports(defaultSol), "Mock routing preview (Jupiter API mode off)."),
-  );
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
 
   const amountSol = parseFloat(sol) || 0;
   const outOfRange = amountSol < MIN_SOL || amountSol > MAX_SOL;
 
   const loadPreview = useCallback(async () => {
     if (outOfRange) return;
-    const lamports = solToLamports(amountSol);
-    if (!jupiterMode) {
-      setError(null);
-      setPreview(buildMockRoutePreview(lamports, "Mock routing preview (Jupiter API mode off)."));
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
+      const { data: session } = await supabase.auth.getSession();
+      const token = session.session?.access_token;
+      if (!token) {
+        setSignedOut(true);
+        setPreview(null);
+        return;
+      }
+      setSignedOut(false);
       const res = await fetch("/api/jupiter/quote", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputMint: SOL_MINT, outputMint: USDC_MINT, amount: lamports }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          inputMint: SOL_MINT,
+          outputMint: USDC_MINT,
+          amount: solToLamports(amountSol),
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "Route preview failed.");
-        setPreview(
-          buildMockRoutePreview(lamports, "Route preview failed — showing mock routing instead."),
-        );
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setSignedOut(true);
+        setPreview(null);
+      } else if (!res.ok) {
+        setError((data as { error?: string }).error ?? "Route preview failed.");
+        setPreview(null);
       } else {
         setPreview(data as Preview);
       }
     } catch {
       setError("Could not reach the route preview endpoint.");
-      setPreview(buildMockRoutePreview(lamports, "Network error — showing mock routing instead."));
+      setPreview(null);
     } finally {
       setLoading(false);
     }
-  }, [amountSol, jupiterMode, outOfRange]);
+  }, [amountSol, outOfRange]);
 
   useEffect(() => {
     void loadPreview();
   }, [loadPreview]);
 
-  const fmtUsd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
-
   return (
     <div className="rounded-3xl border border-border/60 bg-card p-6 space-y-5 shadow-[var(--shadow-soft)]">
-      <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5">
-            {jupiterMode ? (
-              <ToggleRight className="w-5 h-5 text-primary" />
-            ) : (
-              <ToggleLeft className="w-5 h-5 text-muted-foreground" />
-            )}
-          </div>
-          <div>
-            <div className="font-semibold text-sm">Jupiter API mode</div>
-            <p className="text-xs text-muted-foreground mt-1 max-w-md">
-              When on, the route and quote come from Jupiter in sandbox mode. If the key isn&apos;t
-              configured, it falls back to mock routing. Preview only — nothing is signed or sent.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() => setJupiterMode((v) => !v)}
-          className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-            jupiterMode
-              ? "bg-primary text-primary-foreground"
-              : "bg-card border border-border hover:bg-secondary"
-          }`}
-        >
-          {jupiterMode ? "Jupiter mode on" : "Jupiter mode off"}
-        </button>
-      </div>
-
       <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
         <label className="block">
           <span className="text-xs font-medium text-muted-foreground">Amount (SOL)</span>
@@ -141,79 +105,123 @@ export function SwapRoutePreviewCard({ defaultSol = MIN_SOL }: { defaultSol?: nu
           Amount must be between {MIN_SOL} and {MAX_SOL} SOL.
         </div>
       )}
+      {signedOut && (
+        <div className="rounded-xl border border-border bg-secondary px-4 py-3 text-sm">
+          Sign in to see a live route.{" "}
+          <Link
+            to="/auth"
+            search={{ next: "/swap" }}
+            className="font-semibold text-primary hover:underline"
+          >
+            Sign in
+          </Link>
+        </div>
+      )}
       {error && (
-        <div className="rounded-xl border border-border bg-secondary px-4 py-3 text-sm">{error}</div>
+        <div className="rounded-xl border border-border bg-secondary px-4 py-3 text-sm">
+          {error}
+        </div>
       )}
 
-      <div className="rounded-2xl border border-border/60 bg-background p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
+      {preview && (
+        <div className="rounded-2xl border border-border/60 bg-background p-5 space-y-4">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <RouteIcon className="w-4 h-4 text-primary" />
             Swap route preview
           </div>
-          <ModeBadge source={preview.source} />
-        </div>
 
-        <p className="text-xs text-muted-foreground">{preview.message}</p>
+          <p className="text-xs text-muted-foreground">{preview.message}</p>
 
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            Route steps
+          {preview.steps.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Route steps
+              </div>
+              <ol className="space-y-2">
+                {preview.steps.map((s, i) => (
+                  <li
+                    key={`${s.amm}-${i}`}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="inline-flex w-6 h-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                        {i + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{s.label}</div>
+                        <div className="text-xs text-muted-foreground truncate">{s.amm}</div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold">{s.percent}%</div>
+                      <div className="text-xs text-muted-foreground">
+                        {s.feeUsd !== null ? `fee ${fmtUsd(s.feeUsd)}` : "fee n/a"}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-x-6">
+            <div>
+              <Row k="Input" v={`${preview.inAmountSol} SOL`} />
+              <Row k="Expected USDC output" v={`${preview.outAmountUsdc.toFixed(4)} USDC`} />
+              <Row
+                k="Minimum received"
+                v={
+                  preview.minOutAmountUsdc !== null
+                    ? `${preview.minOutAmountUsdc.toFixed(4)} USDC`
+                    : "set when you swap"
+                }
+              />
+              <Row
+                k="Slippage tolerance"
+                v={
+                  preview.slippageBps
+                    ? `${(preview.slippageBps / 100).toFixed(2)}%`
+                    : "set when you swap"
+                }
+              />
+            </div>
+            <div>
+              <Row
+                k="Price impact"
+                v={
+                  preview.priceImpactPct !== null
+                    ? `${preview.priceImpactPct.toFixed(3)}%`
+                    : "unknown"
+                }
+              />
+              <Row
+                k="Swap fee"
+                v={
+                  preview.swapFeeBps !== null
+                    ? `${(preview.swapFeeBps / 100).toFixed(2)}% (${fmtUsd(preview.swapFeeUsd)})`
+                    : "n/a"
+                }
+              />
+              <Row
+                k="Solana network fee"
+                v={
+                  preview.networkFeeLamports !== null
+                    ? `${Number(preview.networkFeeLamports) / 1e9} SOL`
+                    : "set when you swap"
+                }
+              />
+            </div>
           </div>
-          <ol className="space-y-2">
-            {preview.steps.map((s, i) => (
-              <li
-                key={`${s.amm}-${i}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="inline-flex w-6 h-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{s.label}</div>
-                    <div className="text-xs text-muted-foreground truncate">{s.amm}</div>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-sm font-semibold">{s.percent}%</div>
-                  <div className="text-xs text-muted-foreground">
-                    {s.feeUsd !== null ? `fee ${fmtUsd(s.feeUsd)}` : "fee n/a"}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
 
-        <div className="grid md:grid-cols-2 gap-x-6">
-          <div>
-            <Row k="Input" v={`${preview.inAmountSol} SOL`} />
-            <Row k="Expected USDC output" v={`${preview.outAmountUsdc.toFixed(4)} USDC`} />
-            <Row k="Minimum received" v={`${preview.minOutAmountUsdc.toFixed(4)} USDC`} />
-            <Row k="Slippage tolerance" v={`${(preview.slippageBps / 100).toFixed(2)}%`} />
-          </div>
-          <div>
-            <Row
-              k="Price impact"
-              v={
-                preview.priceImpactPct !== null ? `${preview.priceImpactPct.toFixed(3)}%` : "unknown"
-              }
-            />
-            <Row k="Liquidity / AMM fees" v={fmtUsd(preview.lpFeeUsd)} />
-            <Row k="Platform fee" v={fmtUsd(preview.platformFeeUsd)} />
-            <Row k="Solana network fee" v={`${preview.networkFeeSol} SOL`} />
+          <div className="flex gap-2 rounded-xl border border-border/60 bg-secondary px-4 py-3 text-xs text-muted-foreground">
+            <Info className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              Output destination is always your own connected wallet. Nothing is signed or sent from
+              this preview.
+            </span>
           </div>
         </div>
-
-        <div className="flex gap-2 rounded-xl border border-border/60 bg-secondary px-4 py-3 text-xs text-muted-foreground">
-          <Info className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>
-            Output destination is always your own connected wallet. Fiat payout, Partner payout and
-            KYC stay disabled in this preview.
-          </span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

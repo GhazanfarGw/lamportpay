@@ -125,8 +125,8 @@ const sections: { title: string; body: React.ReactNode }[] = [
     title: "11. Supported demo corridors",
     body: (
       <p>
-        Pakistan PKR, India INR, Nigeria NGN, Philippines PHP, Mexico MXN, Bangladesh BDT, Egypt
-        EGP, Colombia COP, Brazil BRL, Peru PEN.
+        Pakistan PKR, Nigeria NGN, Philippines PHP, Mexico MXN, Colombia COP, Brazil BRL, Kenya KES,
+        United Kingdom GBP and United States USD, subject to our payout partner's live support.
       </p>
     ),
   },

@@ -13,18 +13,15 @@ export const TOKEN_USD: Record<Token, number> = {
 
 export const CORRIDORS = [
   { country: "Pakistan", currency: "PKR", rate: 278, flag: "🇵🇰" },
-  { country: "India", currency: "INR", rate: 83, flag: "🇮🇳" },
   { country: "Nigeria", currency: "NGN", rate: 1500, flag: "🇳🇬" },
   { country: "Philippines", currency: "PHP", rate: 58, flag: "🇵🇭" },
   { country: "Mexico", currency: "MXN", rate: 18, flag: "🇲🇽" },
-  { country: "Bangladesh", currency: "BDT", rate: 117, flag: "🇧🇩" },
-  { country: "Egypt", currency: "EGP", rate: 48, flag: "🇪🇬" },
   { country: "Colombia", currency: "COP", rate: 4000, flag: "🇨🇴" },
   { country: "Brazil", currency: "BRL", rate: 5.5, flag: "🇧🇷" },
-  { country: "Peru", currency: "PEN", rate: 3.7, flag: "🇵🇪" },
 ] as const;
 
-export const PAYOUT_METHODS = ["Bank account", "Mobile wallet", "Card", "Cash pickup"] as const;
+// Bank-to-bank payouts only (business decision).
+export const PAYOUT_METHODS = ["Bank account"] as const;
 export const SENDER_CURRENCIES = ["USD", "GBP", "EUR", "CAD", "AUD", "AED"] as const;
 
 export function calcQuote(amount: number, token: Token, currency: string) {
@@ -52,17 +49,4 @@ export function fmt(n: number, digits = 2) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
-}
-
-export function mockSolanaHash() {
-  const chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  return Array.from({ length: 88 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-
-export function mockPayoutRef() {
-  return "brg_" + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6);
-}
-
-export function mockPaymentId() {
-  return "pay_" + Math.random().toString(36).slice(2, 14);
 }

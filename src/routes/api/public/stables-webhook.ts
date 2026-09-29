@@ -52,13 +52,23 @@ export const Route = createFileRoute("/api/public/stables-webhook")({
         if (!hasSvixHeaders(request.headers)) {
           return reply({ error: "Missing svix signature headers." }, 401);
         }
+        // A signed delivery we refuse is otherwise invisible on our side (for
+        // example after the endpoint's secret was rotated): log why, never the
+        // body or the secret.
+        const svixId = request.headers.get("svix-id");
         const secret = getStablesWebhookSecret();
         // Without a secret no event can be authenticated: refuse rather than trust it.
-        if (!secret) return reply({ error: "Webhook verification is not configured." }, 503);
+        if (!secret) {
+          console.warn(`[stables-webhook] refused ${svixId}: no STABLES_WEBHOOK_SECRET is set`);
+          return reply({ error: "Webhook verification is not configured." }, 503);
+        }
 
         const rawBody = await request.text();
         const verification = verifyStablesWebhook(rawBody, request.headers, secret);
-        if (!verification.ok) return reply({ error: verification.reason }, 401);
+        if (!verification.ok) {
+          console.warn(`[stables-webhook] refused ${svixId}: ${verification.reason}`);
+          return reply({ error: verification.reason }, 401);
+        }
 
         let payload: z.infer<typeof Envelope>;
         try {
@@ -83,6 +93,17 @@ export const Route = createFileRoute("/api/public/stables-webhook")({
           console.error(`[stables-webhook] could not store ${event.event_id}`, error);
           return reply({ error: "Could not store the event." }, 500);
         }
+        // Ties our record (event_id) to the delivery Stables' dashboard lists (svix-id).
+        console.info(
+          JSON.stringify({
+            event: "stables_webhook_received",
+            svix_id: svixId,
+            event_id: event.event_id,
+            event_type: event.event_type,
+            // new: first delivery; retry: stored earlier but not processed; duplicate: already done.
+            claim,
+          }),
+        );
         if (claim === "duplicate") return reply({ received: true, duplicate: true });
 
         runAfterResponse(request, processWebhookEvent(event));

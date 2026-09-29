@@ -83,7 +83,7 @@ export const post: BlogPost = {
   ],
   productLinks: [
     { to: "/how-it-works", label: "How it works", note: "See the full route, leg by leg, with the current status of each step." },
-    { to: "/send", label: "Transfer demo", note: "Walk through quoting, simulated identity checks, tracking and receipt." },
+    { to: "/pay", label: "Send a payment", note: "Walk through quoting, identity verification, tracking and the receipt." },
     { to: "/compliance", label: "Compliance position", note: "Read exactly which activities LamportPay does and does not perform." },
   ],
   relatedSlugs: ["why-stablecoins-settle-cross-border-payments", "web3-payment-rails-architecture"],

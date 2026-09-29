@@ -20,10 +20,10 @@ Change these only on the owner's instruction.
 - **No hardcoded countries or currencies.** The user picks a country and currency; a Stables
   preview quote decides whether it is supported, and Stables validates the bank fields
   (`POST /payment-methods/validate`). No corridor lists, no country-specific code.
-- **Limits: 100 to 1,000,000 per payment, from config.** `PAYMENT_MIN_USDC`,
-  `PAYMENT_MAX_USDC`, `PAYMENT_MIN_USDT`, `PAYMENT_MAX_USDT`, read in
-  `src/lib/payments/limits.server.ts` (defaults 100 and 1000000). Don't repeat the numbers
-  anywhere else. Stables applies its own per-customer limits on top.
+- **Limits: minimum 100 per payment; maximum = Stables' limits (owner decision 2026-09-29).**
+  `PAYMENT_MIN_USDC`, `PAYMENT_MAX_USDC`, `PAYMENT_MIN_USDT`, `PAYMENT_MAX_USDT`, read in
+  `src/lib/payments/limits.server.ts` (defaults 100 and 1000000; `PAYMENT_MAX_*=none` = no
+  LamportPay maximum, Stables' per-customer limits decide). Don't repeat the numbers anywhere else.
 - **USDC and USDT on Solana only** (`PAYMENT_CURRENCIES` in `src/lib/tokens.ts`, mirrored by
   the `payments_source_currency_check` constraint).
 - **White-label UI.** The current UI still names Stables in many places (for example

@@ -111,10 +111,10 @@ export function TransferSimulator({ compact = false }: { compact?: boolean }) {
             </div>
             {!compact && (
               <Link
-                to="/send"
+                to="/pay"
                 className="mt-2 flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-semibold text-white bg-[image:var(--gradient-hero)] shadow-[var(--shadow-elegant)] hover:opacity-95 transition"
               >
-                Start demo transfer <ArrowRight className="w-4 h-4" />
+                Send a payment <ArrowRight className="w-4 h-4" />
               </Link>
             )}
             <p className="text-[11px] text-muted-foreground flex items-start gap-1.5 leading-relaxed">

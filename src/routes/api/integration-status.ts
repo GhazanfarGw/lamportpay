@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { getBusinessSettings } from "@/lib/business-settings.server";
 import { getPaymentLimits } from "@/lib/payments/limits.server";
 import { getStablesConfig, getStablesWebhookSecret } from "@/lib/stables/config.server";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 
-function paymentLimits(currency: PaymentCurrency): { min: string; max: string } | null {
+function paymentLimits(currency: PaymentCurrency): { min: string; max: string | null } | null {
   try {
     const { min, max } = getPaymentLimits(currency);
     return { min, max };
@@ -28,6 +29,12 @@ export const Route = createFileRoute("/api/integration-status")({
 
         const jupiterMode = jupiterConfigured ? "sandbox" : "mock";
         const stablesMode = !stables.configured ? "mock" : stablesLive ? "live" : "sandbox";
+        // Public business settings only (coins turned on, fee rate); never the revenue wallet.
+        const settings = await getBusinessSettings().catch((e: unknown) => {
+          console.error("[status] business settings:", e instanceof Error ? e.message : e);
+          return null;
+        });
+        const coins = settings?.enabledCurrencies ?? [...PAYMENT_CURRENCIES];
 
         return Response.json(
           {
@@ -39,7 +46,7 @@ export const Route = createFileRoute("/api/integration-status")({
                 mode: jupiterMode,
                 note: jupiterConfigured
                   ? "Route previews and orders use live Jupiter data."
-                  : "Route previews fall back to local mock routing.",
+                  : "Swaps are not configured: route previews and orders are unavailable.",
               },
               {
                 name: "Stables",
@@ -76,8 +83,10 @@ export const Route = createFileRoute("/api/integration-status")({
               swapLimits: "0.001 – 0.01 SOL",
               paymentLimitsUsdc: paymentLimits("usdc"),
               paymentLimits: Object.fromEntries(
-                PAYMENT_CURRENCIES.map((currency) => [currency, paymentLimits(currency)]),
+                coins.map((currency) => [currency, paymentLimits(currency)]),
               ),
+              paymentCurrencies: coins,
+              platformFeeBps: settings?.conversionFeeBps ?? null,
               outputDestination: "connected wallet only",
             },
           },

@@ -716,3 +716,81 @@ export const claimFirstAdminRole = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { granted: true };
   });
+
+/**
+ * Business settings for the admin dashboard: LamportPay's conversion fee, the
+ * swap fee, the revenue wallet and the payment coins, each with where its value
+ * comes from (admin override or .env). No secrets: the revenue wallet and the
+ * Jupiter referral account are public addresses; API keys are never read here.
+ */
+export const getBusinessSettingsAdmin = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await requireAdmin(context);
+    const { getBusinessSettings } = await import("@/lib/business-settings.server");
+    let settings;
+    let error: string | null = null;
+    try {
+      settings = await getBusinessSettings();
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Settings are invalid.";
+    }
+    const referral = process.env["JUPITER_REFERRAL_ACCOUNT"]?.trim() || null;
+    return { settings: settings ?? null, error, jupiterReferralAccount: referral };
+  });
+
+const PAYMENT_COIN = z.enum(["usdc", "usdt"]);
+
+export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        conversionFeeBps: z.number().int().min(0).max(1000).nullable().optional(),
+        swapFeeBps: z.number().int().min(0).max(255).nullable().optional(),
+        revenueWallet: z
+          .string()
+          .trim()
+          .regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "Enter a Solana address.")
+          .nullable()
+          .optional(),
+        enabledCurrencies: z.array(PAYMENT_COIN).min(1).max(2).nullable().optional(),
+        note: z.string().trim().max(300).optional(),
+      })
+      .strict()
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
+    const { supabase, userId, claims } = context;
+    const actor = { id: userId, email: (claims as { email?: string } | null)?.email ?? null };
+    const { updateBusinessSettings, bpsLabel } = await import("@/lib/business-settings.server");
+    const { note, ...patch } = data;
+
+    let result;
+    try {
+      result = await updateBusinessSettings(patch, userId);
+    } catch (e) {
+      throw new Error(e instanceof Error ? e.message : "Could not save the settings.");
+    }
+    const { before, after } = result;
+    const show = {
+      conversionFeeBps: (s: typeof before) => bpsLabel(s.conversionFeeBps),
+      swapFeeBps: (s: typeof before) => bpsLabel(s.swapFeeBps),
+      revenueWallet: (s: typeof before) => s.revenueWallet ?? "none",
+      enabledCurrencies: (s: typeof before) => s.enabledCurrencies.join(","),
+    };
+    const entries = (Object.keys(show) as (keyof typeof show)[])
+      .filter((field) => show[field](before) !== show[field](after))
+      .map((field) => ({
+        entityType: "business_settings" as const,
+        entityReference: "business_settings",
+        action: "setting_changed",
+        field,
+        oldValue: show[field](before),
+        newValue: show[field](after),
+        note: note ?? null,
+      }));
+    await logAdminActions(supabase, actor, entries);
+    return { settings: after, changed: entries.length };
+  });

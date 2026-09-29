@@ -13,10 +13,29 @@ export type FundingPanelProps = {
   /** Stablecoin label, "USDC" or "USDT". */
   currency?: string;
   depositAddress: string;
+  /** LamportPay's fee, sent in the same transaction; omitted when there is none. */
+  platformFee?: string | null;
   onFunded: () => void;
 };
 
-type BuiltTransaction = { transaction: string; amount: string; depositAddress: string };
+type BuiltTransaction = {
+  transaction: string;
+  amount: string;
+  depositAddress: string;
+  platformFee?: string;
+  total?: string;
+};
+
+/** Sum of two decimal strings with at most 6 decimals (display only). */
+function addAmounts(a: string, b: string): string {
+  const minor = (v: string) => {
+    const [whole = "0", frac = ""] = v.split(".");
+    return BigInt(whole) * 1_000_000n + BigInt((frac + "000000").slice(0, 6));
+  };
+  const sum = minor(a) + minor(b);
+  const frac = (sum % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return `${sum / 1_000_000n}${frac ? `.${frac}` : ""}`;
+}
 
 function fromBase64(value: string): Uint8Array {
   const binary = atob(value);
@@ -55,8 +74,11 @@ export function FundingPanel({
   amount,
   currency = "USDC",
   depositAddress,
+  platformFee = null,
   onFunded,
 }: FundingPanelProps) {
+  const hasFee = platformFee !== null && Number(platformFee) > 0;
+  const total = hasFee ? addAmounts(amount, platformFee!) : amount;
   const { publicKey, connected, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const [busy, setBusy] = useState<"build" | "send" | "verify" | null>(null);
@@ -74,7 +96,13 @@ export function FundingPanel({
         `/api/payments/${paymentId}/funding-transaction`,
         { method: "POST", body: { payer: publicKey.toBase58() } },
       );
-      if (data.depositAddress !== depositAddress || data.amount !== amount) {
+      // The server builds the transaction; it must match what the page showed.
+      if (
+        data.depositAddress !== depositAddress ||
+        data.amount !== amount ||
+        (hasFee &&
+          (data.platformFee === undefined || Number(data.platformFee) !== Number(platformFee)))
+      ) {
         throw new Error("Deposit instructions changed. Refresh the page before sending.");
       }
 
@@ -91,7 +119,17 @@ export function FundingPanel({
     } finally {
       setBusy(null);
     }
-  }, [publicKey, paymentId, depositAddress, amount, sendTransaction, connection, onFunded]);
+  }, [
+    publicKey,
+    paymentId,
+    depositAddress,
+    amount,
+    hasFee,
+    platformFee,
+    sendTransaction,
+    connection,
+    onFunded,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -111,7 +149,7 @@ export function FundingPanel({
               ? "Approve in your wallet…"
               : busy === "verify"
                 ? "Verifying on Solana…"
-                : `Send ${amount} ${currency}`}
+                : `Send ${total} ${currency}`}
         </button>
       ) : (
         <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
@@ -122,8 +160,18 @@ export function FundingPanel({
               <strong>
                 {amount} {currency}
               </strong>{" "}
-              on Solana mainnet to the single-use Stables deposit address. On-chain transfers cannot
-              be reversed.
+              on Solana mainnet to the single-use Stables deposit address
+              {hasFee && (
+                <>
+                  {" "}
+                  and the{" "}
+                  <strong>
+                    {platformFee} {currency}
+                  </strong>{" "}
+                  LamportPay fee, <strong>{total}</strong> in total, in one transaction
+                </>
+              )}
+              . On-chain transfers cannot be reversed.
             </span>
           </div>
           <div className="flex gap-2">
