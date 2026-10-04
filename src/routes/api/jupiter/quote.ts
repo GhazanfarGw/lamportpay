@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
+import { assertEndpointAllowed, ModeGuardError } from "@/lib/app-mode.server";
 import { authenticateUser } from "@/lib/payments/auth.server";
 import {
   buildRoutePreview,
@@ -28,6 +29,8 @@ const QuoteInput = z
       .regex(/^\d+$/, "amount must be a numeric string in lamports."),
   })
   .strict();
+
+const JUPITER_ORDER_URL = "https://api.jup.ag/swap/v2/order";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -92,10 +95,18 @@ export const Route = createFileRoute("/api/jupiter/quote")({
           return errorResponse("Maximum preview amount is 0.01 SOL.", 400);
         }
 
+        const url = new URL(JUPITER_ORDER_URL);
+        // TEST MODE is isolated from mainnet: no Jupiter call, not even a preview.
+        try {
+          assertEndpointAllowed("jupiter_quote", url.toString());
+        } catch (e) {
+          if (e instanceof ModeGuardError) return errorResponse(e.message, 403);
+          throw e;
+        }
+
         const apiKey = process.env["JUPITER_API_KEY"];
         if (!apiKey) return errorResponse("Swaps are not configured.", 503);
 
-        const url = new URL("https://api.jup.ag/swap/v2/order");
         url.searchParams.set("inputMint", SOL_MINT);
         url.searchParams.set("outputMint", USDC_MINT);
         url.searchParams.set("amount", amount);

@@ -1,6 +1,14 @@
 // Solana web3.js / wallet adapters expect Node's Buffer + `global` in the browser.
-// Keep this shim self-contained: production bundling currently turns the
-// `buffer` package import into an empty module in this project.
+//
+// vite.config.ts aliases every `buffer` import (web3.js's own included) to this
+// file. The minimal Uint8Array shim below was all it used to provide, but
+// web3.js needs the full Node API to SERIALIZE a transaction (Buffer#copy,
+// writeUIntLE…): any wallet signing of a transaction failed with
+// "Buffer.from(...).copy is not a function" (found 3 Oct 2026, TEST Pay Now).
+// So the real `buffer` package (v6, pure JS) is loaded through its file path
+// "buffer/index.js", which the alias does not match. The shim stays only as a
+// fallback for a bundle where that import comes out empty.
+import { Buffer as PackageBuffer } from "buffer/index.js";
 
 type BufferEncoding = "utf8" | "utf-8" | "hex" | "base64";
 
@@ -122,11 +130,27 @@ BrowserBuffer.concat = function concat(
 };
 (BrowserBuffer as unknown as { prototype: Uint8Array }).prototype = Uint8Array.prototype;
 
-export const Buffer = BrowserBuffer as unknown as BufferStatic;
+const fullBuffer =
+  typeof (PackageBuffer as unknown as { prototype?: { writeUIntLE?: unknown } } | undefined)
+    ?.prototype?.writeUIntLE === "function"
+    ? (PackageBuffer as unknown as BufferStatic)
+    : null;
+
+export const Buffer: BufferStatic = fullBuffer ?? (BrowserBuffer as unknown as BufferStatic);
+
+/** True when the full Buffer implementation loaded (transactions can be serialized). */
+export const hasFullBuffer = fullBuffer !== null;
 
 export function installBufferPolyfill() {
   const g = globalThis as unknown as { Buffer?: BufferStatic; global?: unknown };
-  if (typeof g.Buffer === "undefined") g.Buffer = Buffer;
+  // Replace a missing or minimal global Buffer with the full one.
+  const current = g.Buffer as unknown as { prototype?: { copy?: unknown } } | undefined;
+  if (
+    typeof g.Buffer === "undefined" ||
+    (fullBuffer && typeof current?.prototype?.copy !== "function")
+  ) {
+    g.Buffer = Buffer;
+  }
   if (typeof g.global === "undefined") g.global = globalThis;
 }
 

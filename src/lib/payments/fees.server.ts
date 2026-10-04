@@ -9,8 +9,9 @@
  * An admin can override each one from the admin dashboard (business_settings,
  * see business-settings.server.ts); the effective value is what payments use.
  *
- * Non-custodial by design: the fee is added ON TOP of the amount Stables quotes and
- * is paid in the same user-signed transaction as a separate transfer to the revenue
+ * Non-custodial by design: the fee is 2% of the total the user sends and comes out of
+ * it (see fee-math.ts); the user signs one transaction with the Stables deposit
+ * (the rest) and the fee as separate transfers; the fee goes to the revenue
  * wallet. The Stables deposit itself goes straight from the user's wallet to Stables;
  * customer funds never pass through a LamportPay wallet.
  *
@@ -18,9 +19,11 @@
  */
 import { PublicKey } from "@solana/web3.js";
 
+import { toMinor } from "@/lib/money";
+import { lamportpayFeeMinor } from "@/lib/payments/fee-math";
+
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 
-const BPS_DENOMINATOR = 10_000n;
 const DIGITS = /^\d+$/;
 
 export type FeeConfig = {
@@ -115,8 +118,27 @@ export function envEnabledCurrencies(): PaymentCurrency[] {
  */
 export function conversionFeeMinor(depositMinor: bigint, feeBps: bigint): bigint {
   if (depositMinor < 0n) throw new Error("Deposit amount cannot be negative.");
-  if (feeBps === 0n || depositMinor === 0n) return 0n;
-  return (depositMinor * feeBps + BPS_DENOMINATOR - 1n) / BPS_DENOMINATOR;
+  return lamportpayFeeMinor(depositMinor, feeBps);
+}
+
+/**
+ * Optional minimum and maximum LamportPay fee from .env (C05 fee models), in
+ * the payment coin's major units: LAMPORTPAY_FEE_MIN / LAMPORTPAY_FEE_MAX.
+ * Unset, empty or "none" means no bound. Both coins have 6 decimals.
+ */
+export function envFeeBounds(): { minMinor: bigint | null; maxMinor: bigint | null } {
+  const read = (name: string): bigint | null => {
+    const raw = process.env[name]?.trim();
+    if (!raw || raw.toLowerCase() === "none") return null;
+    let value: bigint;
+    try {
+      value = toMinor(raw, "usdc");
+    } catch {
+      throw new Error(`${name} must be an amount with at most 6 decimals, or "none".`);
+    }
+    return value > 0n ? value : null;
+  };
+  return { minMinor: read("LAMPORTPAY_FEE_MIN"), maxMinor: read("LAMPORTPAY_FEE_MAX") };
 }
 
 /** What the user pays in total: Stables' exact deposit plus LamportPay's fee on top. */

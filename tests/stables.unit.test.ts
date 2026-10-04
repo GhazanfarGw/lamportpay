@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { idempotencyKey } from "@/lib/stables/client.server";
 import { getStablesConfig } from "@/lib/stables/config.server";
@@ -142,7 +142,8 @@ describe("getStablesConfig", () => {
     expect(getStablesConfig().configured).toBe(false);
   });
 
-  it("detects production", () => {
+  it("detects production (in LIVE MODE only)", () => {
+    vi.stubEnv("LAMPORTPAY_MODE", "live");
     process.env["STABLES_API_KEY"] = "sti_live_abc";
     process.env["STABLES_API_URL"] = "https://api.stables.money/";
     expect(getStablesConfig()).toMatchObject({
@@ -150,5 +151,22 @@ describe("getStablesConfig", () => {
       environment: "production",
       apiUrl: "https://api.stables.money",
     });
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses production Stables in TEST MODE, even with a live key", () => {
+    vi.stubEnv("LAMPORTPAY_MODE", "test");
+    process.env["STABLES_API_KEY"] = "sti_live_abc";
+    process.env["STABLES_API_URL"] = "https://api.stables.money";
+    expect(getStablesConfig()).toMatchObject({ configured: false });
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses the sandbox and test keys in LIVE MODE", () => {
+    vi.stubEnv("LAMPORTPAY_MODE", "live");
+    process.env["STABLES_API_KEY"] = "sti_test_abc";
+    process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    expect(getStablesConfig()).toMatchObject({ configured: false });
+    vi.unstubAllEnvs();
   });
 });

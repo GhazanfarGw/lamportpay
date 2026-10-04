@@ -74,9 +74,9 @@ function Compliance() {
             <div className="font-semibold">Partner-led compliance</div>
             <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
               KYC, KYB, AML, sanctions screening, Travel Rule, FX/off-ramp, payout processing, and
-              settlement are performed by licensed regulated settlement partners — not by LamportPay. This
-              posture is intentional: it keeps the surface area of the platform narrow and
-              defensible.
+              settlement are performed by licensed regulated settlement partners — not by
+              LamportPay. This posture is intentional: it keeps the surface area of the platform
+              narrow and defensible.
             </p>
           </div>
         </div>
@@ -130,14 +130,18 @@ function Compliance() {
         </div>
 
         <div className="mt-10 text-xs text-muted-foreground">
-          Demo only. /swap may execute a small real Jupiter SOL-to-USDC swap back to the connected
-          wallet. LamportPay does not process fiat payout, KYC, FX conversion, bank payout, or
-          third-party recipient transfer. No partnership, agreement, or integration with any
-          payout provider is in place or claimed.
+          LamportPay does not hold customer funds or keys. Identity verification, currency
+          conversion and bank payouts are provided by a licensed payout partner, to the customer's
+          own bank account only. LamportPay is in a controlled test phase.
         </div>
-
       </section>
-      <FurtherReading slugs={["compliance-roles-in-crypto-payouts", "crypto-to-fiat-payments-explained", "designing-transparent-payment-quotes"]} />
+      <FurtherReading
+        slugs={[
+          "compliance-roles-in-crypto-payouts",
+          "crypto-to-fiat-payments-explained",
+          "designing-transparent-payment-quotes",
+        ]}
+      />
     </SiteLayout>
   );
 }

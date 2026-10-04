@@ -15,6 +15,8 @@
  * never holds funds and keeps no balances.
  */
 import type { Json } from "@/integrations/supabase/types";
+import { requireRealFundsMode } from "@/lib/app-mode.server";
+import { kycStateOf } from "@/lib/identity/kyc-state";
 import { toMajor, toMinor } from "@/lib/money";
 import { readWalletHoldings, solReserveLamports } from "@/lib/solana-balances.server";
 import { isLikelySignature } from "@/lib/solana-rpc";
@@ -56,18 +58,20 @@ import {
   planSettlement,
   settlementDetail,
   type SettlementPlan,
+  type PlatformFeeQuote,
 } from "./settlement.server";
 import type { AuthenticatedUser } from "./auth.server";
 import * as ledger from "./ledger.server";
 import type { PaymentRow, StablesCustomerRow } from "./ledger.server";
 import {
-  getPaymentLimits,
   groupThousands,
+  limitsFromMajor,
   limitsMessage,
   outsideLimits,
   type PaymentLimits,
 } from "./limits.server";
 import {
+  ACTIVE_TRANSFER_STATES,
   checkTransition,
   isTransferState,
   liftsTravelRuleHold,
@@ -86,8 +90,14 @@ import {
 } from "./view";
 
 import { PaymentError, type FieldIssue } from "./errors";
-import { conversionFeeMinor } from "./fees.server";
-import { getBusinessSettings } from "@/lib/business-settings.server";
+import { platformFee as computePlatformFee } from "./fee-math";
+import {
+  appendFeeLedger,
+  expectedFeeEntries,
+  pricingSnapshot,
+  receivedFeeEntry,
+} from "./fee-ledger.server";
+import { feeModelOf, getBusinessSettings } from "@/lib/business-settings.server";
 
 export { PaymentError, type FieldIssue };
 
@@ -164,7 +174,14 @@ export function fromStablesError(error: StablesError): PaymentError {
       fields.length ? { fields } : undefined,
     );
   }
-  console.error("[stables] request failed", error.status, error.message);
+  // The correlation id is what Stables support asks for; never logs request bodies.
+  console.error(
+    "[stables] request failed",
+    error.status,
+    error.code ?? "-",
+    `correlation_id=${error.correlationId ?? "-"}`,
+    error.message,
+  );
   return new PaymentError(
     "The payout partner is unavailable. Try again shortly.",
     502,
@@ -287,17 +304,21 @@ function minorOrNull(amount: string | undefined | null, currency: string): numbe
 
 // ------------------------------------------------------------------- limits
 
-function paymentLimits(currency: PaymentCurrency): PaymentLimits {
+async function paymentLimits(currency: PaymentCurrency): Promise<PaymentLimits> {
   try {
-    return getPaymentLimits(currency);
+    // Admin-set limits (C07) win over .env; invalid settings pause payments.
+    const settings = await getBusinessSettings();
+    const configured = settings.paymentLimits[currency];
+    if (!configured) throw new Error(`${currency} limits are misconfigured.`);
+    return limitsFromMajor(configured, currency);
   } catch (e) {
     console.error("[payments] invalid payment limits:", e instanceof Error ? e.message : e);
     throw new PaymentError("Payments are temporarily unavailable.", 503, "limits_misconfigured");
   }
 }
 
-function checkLimits(amountMinor: bigint, currency: PaymentCurrency) {
-  const limits = paymentLimits(currency);
+async function checkLimits(amountMinor: bigint, currency: PaymentCurrency) {
+  const limits = await paymentLimits(currency);
   if (outsideLimits(amountMinor, limits)) {
     throw new PaymentError(limitsMessage(limits, label(currency)), 400, "amount_out_of_range");
   }
@@ -321,9 +342,19 @@ function customerName(record: {
   return name || null;
 }
 
-function kycStatusOf(row: StablesCustomerRow | null): KycStatus {
+function kycStatusOf(
+  row: StablesCustomerRow | null,
+  options: { providerUnavailable?: boolean } = {},
+): KycStatus {
   const linkLive = row?.kyc_link_expires_at && Date.parse(row.kyc_link_expires_at) > Date.now();
   return {
+    state: kycStateOf({
+      registered: Boolean(row),
+      verificationStatus: row?.verification_status ?? null,
+      basePayoutStatus: row?.base_payout_status ?? null,
+    }),
+    verifiedAt: row && isCustomerApproved(row) ? (row.verified_at ?? null) : null,
+    providerUnavailable: options.providerUnavailable ?? false,
     status: (row?.verification_status as KycStatus["status"] | null) ?? "not_started",
     basePayout: row?.base_payout_status ?? null,
     subStatus: row?.verification_sub_status ?? [],
@@ -381,7 +412,11 @@ async function advanceKycPayments(
 export async function getKycStatus(user: AuthenticatedUser): Promise<KycStatus> {
   let row = await ledger.getStablesCustomerForUser(user.id);
   const config = getStablesConfig();
+  // Returning verified (or rejected) customers are answered from our own
+  // record: no Stables lookup on every visit. Only an open verification is
+  // refreshed from Stables (webhooks also keep the record current).
   const settled = row?.verification_status === "rejected" || isCustomerApproved(row);
+  let providerUnavailable = false;
   if (row && config.configured && !settled) {
     try {
       row = await syncCustomer(
@@ -393,9 +428,10 @@ export async function getKycStatus(user: AuthenticatedUser): Promise<KycStatus> 
     } catch (e) {
       if (!(e instanceof StablesError)) throw e;
       // Fall back to the stored status; the webhook will catch up.
+      providerUnavailable = true;
     }
   }
-  return kycStatusOf(row);
+  return kycStatusOf(row, { providerUnavailable });
 }
 
 /**
@@ -424,7 +460,7 @@ async function recoverCustomer(config: Configured, userId: string): Promise<Stab
 /** Create the Stables customer (first time) or a fresh hosted KYC link. */
 export async function startKyc(
   user: AuthenticatedUser,
-  input: { firstName?: string; lastName?: string; returnUrl: string },
+  input: { firstName?: string; lastName?: string; email?: string; returnUrl: string },
 ): Promise<KycStatus> {
   const config = requireStables();
   let existing = await ledger.getStablesCustomerForUser(user.id);
@@ -444,6 +480,17 @@ export async function startKyc(
       "name_required",
     );
   }
+  // Wallet sign-in accounts have no email. The payout partner still needs one
+  // for identity verification, so it is asked once, here, and passed straight
+  // to the partner when the customer is created (LamportPay does not store it).
+  const kycEmail = user.email || input.email || undefined;
+  if (!existing && !kycEmail) {
+    throw new PaymentError(
+      "Enter your email address for identity verification.",
+      400,
+      "email_required",
+    );
+  }
 
   // Stables answers 500 to a non-https redirect (such as http://localhost in
   // local dev); without one the user returns to the tab they came from.
@@ -461,7 +508,7 @@ export async function startKyc(
           {
             customer_type: "individual",
             external_customer_id: user.id,
-            email: user.email ?? undefined,
+            email: kycEmail,
             first_name: input.firstName || undefined,
             last_name: input.lastName || undefined,
             entitlements: ["base_payout"],
@@ -588,6 +635,23 @@ function unpricedError(
   return notSupported(country, currency, reason);
 }
 
+/**
+ * Wallet-first identity: an account that signed in with a wallet may only pay
+ * from that wallet. A different connected wallet is never silently treated as
+ * the same (possibly KYC-verified) identity. Email accounts have no linked
+ * wallet, so any wallet they connect is accepted (legacy behaviour).
+ */
+function assertLinkedWallet(user: AuthenticatedUser, wallet: string | null) {
+  const linked = user.wallets ?? [];
+  if (wallet && linked.length > 0 && !linked.includes(wallet)) {
+    throw new PaymentError(
+      "This wallet is not the one you signed in with. Sign in with this wallet to use it.",
+      403,
+      "wallet_not_linked",
+    );
+  }
+}
+
 export async function createPayment(
   user: AuthenticatedUser,
   input: {
@@ -611,6 +675,7 @@ export async function createPayment(
   if (wallet && !isValidPublicKey(wallet)) {
     throw new PaymentError("Invalid wallet address.", 400, "invalid_wallet");
   }
+  assertLinkedWallet(user, wallet);
 
   let amountMinor: bigint;
   try {
@@ -679,7 +744,9 @@ export async function getPaymentView(
   user: AuthenticatedUser,
   paymentId: string,
 ): Promise<PaymentView> {
-  return viewOf(await ownedPayment(user, paymentId));
+  // The payment screen polls this; an open transfer is refreshed from Stables
+  // here (throttled), so the screen moves on without webhooks or a cron run.
+  return viewOf(await syncPaymentWithStables(await ownedPayment(user, paymentId)));
 }
 
 /** The signed-in user's payments, newest first (payment history). */
@@ -726,11 +793,14 @@ export async function latestSettlement(paymentId: string): Promise<StoredSettlem
 
 /** Estimate fields of a payment from the chosen coin's preview quote. */
 /** The fee snapshot a settlement plan priced, for the payment row. */
-function feePatch(fee: { bps: number; minor: bigint; wallet: string | null }) {
+function feePatch(fee: PlatformFeeQuote) {
   return {
     platform_fee_bps: fee.bps,
     platform_fee_minor: Number(fee.minor),
     platform_fee_wallet: fee.minor > 0n ? fee.wallet : null,
+    platform_fee_min_minor: fee.minMinor === null ? null : Number(fee.minMinor),
+    platform_fee_max_minor: fee.maxMinor === null ? null : Number(fee.maxMinor),
+    platform_fee_rule: fee.rule,
   };
 }
 
@@ -754,8 +824,16 @@ async function platformFeeFor(amountMinor: bigint, currency: PaymentCurrency) {
       "currency_disabled",
     );
   }
-  const minor = conversionFeeMinor(amountMinor, BigInt(settings.conversionFeeBps));
-  return { bps: settings.conversionFeeBps, minor, wallet: settings.revenueWallet };
+  const model = feeModelOf(settings);
+  const fee = computePlatformFee(amountMinor, model);
+  return {
+    bps: settings.conversionFeeBps,
+    minor: fee.minor,
+    wallet: settings.revenueWallet,
+    minMinor: model.minMinor,
+    maxMinor: model.maxMinor,
+    rule: fee.rule,
+  } satisfies PlatformFeeQuote;
 }
 
 /** What the payer sends in total: the Stables deposit plus LamportPay's fee. */
@@ -789,7 +867,10 @@ export async function recheckSettlement(
   const config = requireStables();
   const payment = await ownedPayment(user, paymentId);
   const state = ledger.paymentState(payment);
-  if (!PRE_QUOTE_STATES.includes(state) || payment.quote_id) {
+  // Quote first (3 Oct 2026): a QUOTED payment without a transfer may re-read the
+  // wallet balance (e.g. after a top-up), but its coin and amounts stay as quoted.
+  const balanceOnly = state === "QUOTED" && !payment.transfer_id;
+  if (!balanceOnly && (!PRE_QUOTE_STATES.includes(state) || payment.quote_id)) {
     throw new PaymentError(
       "The coin can only change before the payment is quoted.",
       409,
@@ -807,12 +888,15 @@ export async function recheckSettlement(
   if (wallet && !isValidPublicKey(wallet)) {
     throw new PaymentError("Invalid wallet address.", 400, "invalid_wallet");
   }
+  assertLinkedWallet(user, wallet);
   const last = await latestSettlement(payment.id);
   if (last && Date.now() - Date.parse(last.at) < RECHECK_INTERVAL_MS) {
     throw new PaymentError("Wait a few seconds before checking again.", 429, "recheck_too_soon");
   }
 
-  const preference = input.preferredCurrency ?? last?.preference ?? "auto";
+  const preference = balanceOnly
+    ? (payment.source_currency as Preference)
+    : (input.preferredCurrency ?? last?.preference ?? "auto");
   const amountMinor = BigInt(payment.source_amount_minor);
   const plan = await planSettlement(config, {
     amountMinor,
@@ -840,6 +924,21 @@ export async function recheckSettlement(
   if (!chosen) throw new Error(`Settlement chose ${decision.coin}, which Stables did not price.`);
 
   const changed = chosen.coin !== payment.source_currency;
+  if (balanceOnly) {
+    if (changed) {
+      const coin = payment.source_currency.toUpperCase();
+      throw new PaymentError(
+        `This quote is for ${coin}, and your wallet doesn't hold enough ${coin} for it. Add ${coin}, or start a new conversion to pay with another coin.`,
+        409,
+        "settlement_locked",
+      );
+    }
+    // Record the fresh balance read only; the quoted amounts and fee stay.
+    await ledger.recordEvent(payment.id, "settlement_selected", "api", {
+      detail: settlementDetail(plan),
+    });
+    return viewOf(payment);
+  }
   const updated = await ledger.updatePaymentBeforeQuote(
     payment.id,
     state,
@@ -870,7 +969,7 @@ export async function recheckSettlement(
  */
 export async function simulateSandboxDeposit(
   paymentId: string,
-  actor: { id: string; email?: string | null },
+  actor: { id: string; email?: string | null; role?: "admin" | "test_payment" },
 ): Promise<SimulatedDeposit> {
   const config = requireStables();
   if (config.apiKey.startsWith("sti_live_") || config.environment !== "sandbox") {
@@ -906,10 +1005,14 @@ export async function simulateSandboxDeposit(
       simulation_id: result.simulation_id,
       scenario: result.scenario,
       deposit_status: result.deposit_status,
-      admin_id: actor.id,
-      admin_email: actor.email ?? null,
+      ...(actor.role === "test_payment"
+        ? // TEST MODE "Pay Now": triggered by the owner's verified devnet transaction.
+          { trigger: "test_payment", user_id: actor.id }
+        : { admin_id: actor.id, admin_email: actor.email ?? null }),
     },
   });
+  // Pick up what Stables did with the deposit right away (no webhook/cron needed).
+  await syncPaymentById(payment.id, { force: true });
   return result;
 }
 
@@ -923,33 +1026,22 @@ export async function quotePayment(
   if (!allowed.includes(ledger.paymentState(payment))) {
     throw new PaymentError(`A quote is not possible while the payment is ${payment.status}.`, 409);
   }
-  // Limits may have been lowered since the payment was created.
+  // Limits may have been lowered since the payment was created. They apply to
+  // what the user sends: the converted amount plus LamportPay's fee.
   const sourceCurrency = currencyOf(payment);
-  checkLimits(BigInt(payment.source_amount_minor), sourceCurrency);
+  await checkLimits(
+    BigInt(payment.source_amount_minor) + BigInt(payment.platform_fee_minor ?? 0),
+    sourceCurrency,
+  );
   const amountText = `${groupThousands(toMajor(BigInt(payment.source_amount_minor), sourceCurrency))} ${label(sourceCurrency)}`;
 
+  // A quote is only a price (owner decision 3 Oct 2026): the user sees rate,
+  // fees and payout before verifying. No Stables customer lookup here; the
+  // verified customer is required, and re-checked live, when the transfer
+  // (the actual payout) is created in createPaymentTransfer.
   const stored = await ledger.getStablesCustomerForUser(user.id);
-  if (!stored)
-    throw new PaymentError("Verify your identity with Stables first.", 409, "kyc_required");
 
   try {
-    // Always re-check the live customer: verification or entitlements can be revoked.
-    const live = await stables.getCustomer(config, stored.stables_customer_id);
-    const customer = await syncCustomer(user.id, stored, live, "api");
-    if (live.compliance_lock) {
-      throw new PaymentError(
-        "The payout partner has placed a compliance hold on this account.",
-        403,
-      );
-    }
-    if (!isCustomerApproved(customer)) {
-      throw new PaymentError(
-        "Identity verification is not complete yet (verified customer with base_payout required).",
-        409,
-        "kyc_required",
-      );
-    }
-
     payment = await ownedPayment(user, paymentId);
     // A settlement re-check may have switched the coin since the first read.
     if (currencyOf(payment) !== sourceCurrency) {
@@ -1024,7 +1116,7 @@ export async function quotePayment(
     }
 
     const patch = {
-      stables_customer_id: customer.stables_customer_id,
+      ...(stored && { stables_customer_id: stored.stables_customer_id }),
       // Pinned with the quote: the coin can't change once a firm quote exists.
       source_currency: sourceCurrency,
       quote_id: quote.quote_id,
@@ -1228,7 +1320,7 @@ export async function createPaymentTransfer(
 ): Promise<PaymentView> {
   const config = requireStables();
   const payment = await ownedPayment(user, paymentId);
-  if (payment.status !== "QUOTED" || !payment.quote_id || !payment.stables_customer_id) {
+  if (payment.status !== "QUOTED" || !payment.quote_id) {
     throw new PaymentError(
       `A transfer needs a quoted payment; this one is ${payment.status}.`,
       409,
@@ -1285,7 +1377,8 @@ export async function createPaymentTransfer(
 
     const body = {
       quote_id: payment.quote_id,
-      customer_id: payment.stables_customer_id,
+      // The verified customer checked live just above (the quote may predate verification).
+      customer_id: stored.stables_customer_id,
       destination,
       purpose_code: input.purposeCode,
       metadata: { payment_id: payment.id },
@@ -1340,6 +1433,22 @@ export async function createPaymentTransfer(
   const status = normalizeTransferStatus(transfer.status) ?? "CREATED";
   const destinationAmount = minorOrNull(transfer.destination?.amount, payment.destination_currency);
   const fees = storedFees(transfer.fees);
+  // The price is fixed from here on: the database refuses later changes to
+  // the snapshot and to the LamportPay fee columns.
+  const priced = {
+    ...payment,
+    ...(destinationAmount !== null && { destination_amount_minor: destinationAmount }),
+    ...(fees && { fees: fees as Json }),
+    ...(transfer.exchange_rate != null && { exchange_rate: transfer.exchange_rate }),
+  };
+  const snapshot =
+    "problem" in deposit
+      ? null
+      : pricingSnapshot(
+          priced,
+          { amountMinor: deposit.amountMinor, currency: sourceCurrency },
+          new Date().toISOString(),
+        );
 
   const result = await ledger.transitionPayment(payment.id, status, {
     source: "api",
@@ -1350,6 +1459,7 @@ export async function createPaymentTransfer(
     },
     patch: {
       transfer_id: transfer.id,
+      stables_customer_id: stored.stables_customer_id,
       transfer_snapshot: redactTransfer(transfer),
       purpose_code: input.purposeCode,
       beneficiary_summary: {
@@ -1375,6 +1485,7 @@ export async function createPaymentTransfer(
       ...(destinationAmount !== null && { destination_amount_minor: destinationAmount }),
       ...(fees && { fees: fees as Json }),
       ...(transfer.exchange_rate != null && { exchange_rate: transfer.exchange_rate }),
+      ...(snapshot && { pricing_snapshot: snapshot }),
     },
   });
 
@@ -1386,15 +1497,79 @@ export async function createPaymentTransfer(
   }
 
   if ("problem" in deposit) console.error(`[payments] ${payment.id}: ${deposit.problem}`);
+  if (snapshot) await appendFeeLedger(expectedFeeEntries(result.payment, sourceCurrency));
   await replayPendingEvents(transfer.id);
   return viewOf((await ledger.getPayment(payment.id)) ?? result.payment);
 }
 
+/**
+ * Check the user's payout details with Stables before verification and before
+ * anything is created (owner flow, 3 Oct 2026: details → verification → Pay
+ * Now). Read-only at Stables; nothing is stored except a masked audit event.
+ * The holder is the verified name for a verified customer (never the
+ * browser's); for a new customer it is the name they enter, which is also the
+ * name their verification is started with.
+ */
+export async function checkPayoutDetails(
+  user: AuthenticatedUser,
+  paymentId: string,
+  input: { beneficiary: BeneficiaryInput; holderName?: string },
+): Promise<{ valid: true; holderName: string; holderSource: "verified_record" | "entered" }> {
+  const config = requireStables();
+  const payment = await ownedPayment(user, paymentId);
+  const open: PaymentState[] = ["PAYMENT_CREATED", "KYC_PENDING", "KYC_APPROVED", "QUOTED"];
+  if (!open.includes(ledger.paymentState(payment))) {
+    throw new PaymentError(
+      `Payout details can't change while the payment is ${payment.status}.`,
+      409,
+    );
+  }
+  const stored = await ledger.getStablesCustomerForUser(user.id);
+  if (stored?.verification_status === "rejected") {
+    throw new PaymentError(
+      "Identity verification was rejected by the payout partner.",
+      403,
+      "kyc_rejected",
+    );
+  }
+  const verifiedName = stored && isCustomerApproved(stored) ? customerName(stored) : null;
+  const holderName = verifiedName ?? input.holderName?.trim().replace(/\s+/g, " ");
+  if (!holderName || holderName.length < 3 || holderName.length > 140) {
+    throw new PaymentError(
+      "Enter your full name exactly as it appears on your ID.",
+      400,
+      "name_required",
+      { fields: [{ field: "holder_name", message: "Enter your first and last name." }] },
+    );
+  }
+  const destination = toBankBeneficiary(payment, input.beneficiary, holderName);
+  try {
+    const verdict = await stables.validatePaymentMethod(config, { network: "bank", destination });
+    if (!verdict.valid) throw beneficiaryRejected(payment, verdict.errors ?? []);
+  } catch (e) {
+    rethrow(e);
+  }
+  await ledger.recordEvent(payment.id, "payout_details_checked", "api", {
+    detail: {
+      bank_name: input.beneficiary.bankName,
+      account: mask(input.beneficiary.iban ?? input.beneficiary.accountNumber),
+      holder_source: verifiedName ? "verified_record" : "entered",
+    },
+  });
+  return {
+    valid: true,
+    holderName,
+    holderSource: verifiedName ? "verified_record" : "entered",
+  };
+}
+
 // ------------------------------------------------------------------ funding
 
-const FUNDABLE: PaymentState[] = ["CREATED", "AWAITING_FUNDS_COLLECTION"];
+export const FUNDABLE: PaymentState[] = ["CREATED", "AWAITING_FUNDS_COLLECTION"];
 
 function requireLiveFunding() {
+  // TEST MODE: moving real funds is impossible, whatever Stables says.
+  requireRealFundsMode();
   const config = requireStables();
   if (config.environment !== "production") {
     throw new PaymentError(SANDBOX_FUNDING_MESSAGE, 409, "sandbox_funding_disabled");
@@ -1525,6 +1700,7 @@ export async function buildFundingTransaction(
   }
   if (payment.funding_signature) throw new PaymentError("This payment is already funded.", 409);
   if (!isValidPublicKey(payer)) throw new PaymentError("Invalid wallet address.", 400);
+  assertLinkedWallet(user, payer);
   // After a swap, the coins are in the wallet that swapped: pay from that one.
   const swapped = (await ledger.listSwaps(payment.id)).find((s) => s.status === "landed");
   if (swapped && swapped.taker !== payer) {
@@ -1674,6 +1850,11 @@ export async function verifyFunding(
     if (current.funding_signature === signature)
       return { pending: false, payment: await viewOf(current) };
     throw new PaymentError("A different transaction already funded this payment.", 409);
+  }
+  if (fee.wallet) {
+    await appendFeeLedger([
+      receivedFeeEntry(payment.id, result.feeReceivedMinor, currency, signature),
+    ]);
   }
   // The Stables deposit is what the payout depends on, so it drives the state.
   // A missing or short LamportPay fee (a manual send without it) never blocks
@@ -2062,6 +2243,7 @@ export type ReconcileReport = {
 async function reconcileTransfer(
   config: Configured,
   payment: PaymentRow,
+  trigger: "reconcile_job" | "live_sync" = "reconcile_job",
 ): Promise<{ advanced: boolean; settled: boolean; snapshot: Json }> {
   const transfer = await stables.getTransfer(config, payment.transfer_id!);
   const echoed = transfer.metadata?.["payment_id"];
@@ -2082,7 +2264,7 @@ async function reconcileTransfer(
     const stablesAt = isoOrNull(transfer.updated_at) ?? new Date().toISOString();
     const result = await ledger.transitionPayment(payment.id, status, {
       source: "reconcile",
-      detail: { transfer_status: transfer.status, stables_at: stablesAt },
+      detail: { transfer_status: transfer.status, stables_at: stablesAt, trigger },
     });
     advanced = result.applied;
     current = result.payment;
@@ -2093,6 +2275,73 @@ async function reconcileTransfer(
     ledger.paymentState(current) === "COMPLETED" &&
     (await settlePayout(current, transfer.actual_payout ?? null, "reconcile"));
   return { advanced, settled, snapshot: redactTransfer(transfer) };
+}
+
+/** How often an open payment is re-read from Stables while someone is looking at it. */
+export const LIVE_SYNC_INTERVAL_MS = 8_000;
+
+/**
+ * Live status sync (3 Oct 2026). Webhooks are the primary update path, but the
+ * Stables sandbox emits only `transfer.created` (no status transitions) and a
+ * local app cannot receive webhooks at all; the scheduled reconciliation runs
+ * daily. So whenever a payment with an open transfer is viewed (the payment
+ * screen polls every few seconds; the admin pages load it), ask Stables for
+ * the transfer's current status — at most once per LIVE_SYNC_INTERVAL_MS per
+ * payment — and apply it through the same forward-only rules as the
+ * reconciliation job. Stables' status is the only source: nothing is invented,
+ * and a Stables error leaves the stored state as it is.
+ */
+export async function syncPaymentWithStables(
+  payment: PaymentRow,
+  options: { force?: boolean; now?: number } = {},
+): Promise<PaymentRow> {
+  if (!payment.transfer_id) return payment;
+  if (!ACTIVE_TRANSFER_STATES.includes(ledger.paymentState(payment) as TransferState)) {
+    return payment;
+  }
+  const now = options.now ?? Date.now();
+  const last = payment.reconciled_at ? Date.parse(payment.reconciled_at) : 0;
+  if (!options.force && now - last < LIVE_SYNC_INTERVAL_MS) return payment;
+  const config = getStablesConfig();
+  if (!config.configured) return payment;
+
+  // Claim this slot first so concurrent polls don't all call Stables.
+  await ledger.touchPayment(payment.id, { reconciled_at: new Date(now).toISOString() });
+  try {
+    const outcome = await reconcileTransfer(config, payment, "live_sync");
+    await ledger.touchPayment(payment.id, { transfer_snapshot: outcome.snapshot });
+  } catch (e) {
+    console.error(`[live-sync] ${payment.id} (transfer ${payment.transfer_id}) failed`, e);
+    return payment;
+  }
+  return (await ledger.getPayment(payment.id)) ?? payment;
+}
+
+/** Sync one payment by id (admin pages). Never throws. */
+export async function syncPaymentById(paymentId: string, options: { force?: boolean } = {}) {
+  try {
+    const payment = await ledger.getPayment(paymentId);
+    if (payment) await syncPaymentWithStables(payment, options);
+  } catch (e) {
+    console.error(`[live-sync] ${paymentId} failed`, e);
+  }
+}
+
+/** Sync the open payments most in need of it (admin list). Never throws. */
+export async function syncOpenPayments(limit = 10) {
+  try {
+    const payments = await ledger.listPaymentsToReconcile(
+      limit,
+      new Date(Date.now() - RECONCILE_WINDOW_MS),
+    );
+    await Promise.all(
+      payments
+        .filter((p) => ACTIVE_TRANSFER_STATES.includes(ledger.paymentState(p) as TransferState))
+        .map((p) => syncPaymentWithStables(p)),
+    );
+  } catch (e) {
+    console.error("[live-sync] open payments failed", e);
+  }
 }
 
 /**

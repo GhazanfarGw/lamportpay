@@ -1,823 +1,969 @@
-export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Json | undefined }
-  | Json[]
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
+    PostgrestVersion: "14.5";
+  };
   public: {
     Tables: {
       admin_audit_log: {
         Row: {
-          action: string
-          actor_email: string | null
-          actor_id: string | null
-          created_at: string
-          entity_id: string | null
-          entity_reference: string | null
-          entity_type: string
-          field: string | null
-          id: string
-          new_value: string | null
-          note: string | null
-          old_value: string | null
-        }
+          action: string;
+          actor_email: string | null;
+          actor_id: string | null;
+          created_at: string;
+          entity_id: string | null;
+          entity_reference: string | null;
+          entity_type: string;
+          field: string | null;
+          id: string;
+          new_value: string | null;
+          note: string | null;
+          old_value: string | null;
+        };
         Insert: {
-          action: string
-          actor_email?: string | null
-          actor_id?: string | null
-          created_at?: string
-          entity_id?: string | null
-          entity_reference?: string | null
-          entity_type: string
-          field?: string | null
-          id?: string
-          new_value?: string | null
-          note?: string | null
-          old_value?: string | null
-        }
+          action: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          created_at?: string;
+          entity_id?: string | null;
+          entity_reference?: string | null;
+          entity_type: string;
+          field?: string | null;
+          id?: string;
+          new_value?: string | null;
+          note?: string | null;
+          old_value?: string | null;
+        };
         Update: {
-          action?: string
-          actor_email?: string | null
-          actor_id?: string | null
-          created_at?: string
-          entity_id?: string | null
-          entity_reference?: string | null
-          entity_type?: string
-          field?: string | null
-          id?: string
-          new_value?: string | null
-          note?: string | null
-          old_value?: string | null
-        }
-        Relationships: []
-      }
+          action?: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          created_at?: string;
+          entity_id?: string | null;
+          entity_reference?: string | null;
+          entity_type?: string;
+          field?: string | null;
+          id?: string;
+          new_value?: string | null;
+          note?: string | null;
+          old_value?: string | null;
+        };
+        Relationships: [];
+      };
       admin_invites: {
         Row: {
-          accepted_at: string | null
-          accepted_by: string | null
-          created_at: string
-          email: string
-          id: string
-          invited_by: string | null
-          role: Database["public"]["Enums"]["app_role"]
-          status: string
-          updated_at: string
-        }
+          accepted_at: string | null;
+          accepted_by: string | null;
+          created_at: string;
+          email: string;
+          id: string;
+          invited_by: string | null;
+          role: Database["public"]["Enums"]["app_role"];
+          status: string;
+          updated_at: string;
+        };
         Insert: {
-          accepted_at?: string | null
-          accepted_by?: string | null
-          created_at?: string
-          email: string
-          id?: string
-          invited_by?: string | null
-          role?: Database["public"]["Enums"]["app_role"]
-          status?: string
-          updated_at?: string
-        }
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          created_at?: string;
+          email: string;
+          id?: string;
+          invited_by?: string | null;
+          role?: Database["public"]["Enums"]["app_role"];
+          status?: string;
+          updated_at?: string;
+        };
         Update: {
-          accepted_at?: string | null
-          accepted_by?: string | null
-          created_at?: string
-          email?: string
-          id?: string
-          invited_by?: string | null
-          role?: Database["public"]["Enums"]["app_role"]
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          created_at?: string;
+          email?: string;
+          id?: string;
+          invited_by?: string | null;
+          role?: Database["public"]["Enums"]["app_role"];
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       business_settings: {
         Row: {
-          conversion_fee_bps: number | null
-          enabled_currencies: string[] | null
-          id: boolean
-          revenue_wallet: string | null
-          swap_fee_bps: number | null
-          updated_at: string
-          updated_by: string | null
-        }
+          conversion_fee_bps: number | null;
+          enabled_currencies: string[] | null;
+          platform_fee_max_minor: number | null;
+          platform_fee_min_minor: number | null;
+          id: boolean;
+          payment_limits: Json | null;
+          revenue_wallet: string | null;
+          swap_fee_bps: number | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
         Insert: {
-          conversion_fee_bps?: number | null
-          enabled_currencies?: string[] | null
-          id?: boolean
-          revenue_wallet?: string | null
-          swap_fee_bps?: number | null
-          updated_at?: string
-          updated_by?: string | null
-        }
+          conversion_fee_bps?: number | null;
+          enabled_currencies?: string[] | null;
+          platform_fee_max_minor?: number | null;
+          platform_fee_min_minor?: number | null;
+          id?: boolean;
+          payment_limits?: Json | null;
+          revenue_wallet?: string | null;
+          swap_fee_bps?: number | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
         Update: {
-          conversion_fee_bps?: number | null
-          enabled_currencies?: string[] | null
-          id?: boolean
-          revenue_wallet?: string | null
-          swap_fee_bps?: number | null
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: []
-      }
+          conversion_fee_bps?: number | null;
+          enabled_currencies?: string[] | null;
+          platform_fee_max_minor?: number | null;
+          platform_fee_min_minor?: number | null;
+          id?: boolean;
+          payment_limits?: Json | null;
+          revenue_wallet?: string | null;
+          swap_fee_bps?: number | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [];
+      };
       jupiter_swap_orders: {
         Row: {
-          created_at: string
-          expires_at: string
-          id: string
-          in_amount_minor: number
-          input_mint: string
-          jupiter_error: string | null
-          jupiter_request_id: string
-          jupiter_status: string | null
-          order_transaction: string
-          output_mint: string
-          relayed_at: string | null
-          signature: string | null
-          status: string
-          taker: string
-          updated_at: string
-          user_id: string
-        }
+          created_at: string;
+          expires_at: string;
+          id: string;
+          in_amount_minor: number;
+          input_mint: string;
+          jupiter_error: string | null;
+          jupiter_request_id: string;
+          jupiter_status: string | null;
+          order_transaction: string;
+          output_mint: string;
+          relayed_at: string | null;
+          signature: string | null;
+          status: string;
+          taker: string;
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          created_at?: string
-          expires_at: string
-          id?: string
-          in_amount_minor: number
-          input_mint: string
-          jupiter_error?: string | null
-          jupiter_request_id: string
-          jupiter_status?: string | null
-          order_transaction: string
-          output_mint: string
-          relayed_at?: string | null
-          signature?: string | null
-          status?: string
-          taker: string
-          updated_at?: string
-          user_id: string
-        }
+          created_at?: string;
+          expires_at: string;
+          id?: string;
+          in_amount_minor: number;
+          input_mint: string;
+          jupiter_error?: string | null;
+          jupiter_request_id: string;
+          jupiter_status?: string | null;
+          order_transaction: string;
+          output_mint: string;
+          relayed_at?: string | null;
+          signature?: string | null;
+          status?: string;
+          taker: string;
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          created_at?: string
-          expires_at?: string
-          id?: string
-          in_amount_minor?: number
-          input_mint?: string
-          jupiter_error?: string | null
-          jupiter_request_id?: string
-          jupiter_status?: string | null
-          order_transaction?: string
-          output_mint?: string
-          relayed_at?: string | null
-          signature?: string | null
-          status?: string
-          taker?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
+          created_at?: string;
+          expires_at?: string;
+          id?: string;
+          in_amount_minor?: number;
+          input_mint?: string;
+          jupiter_error?: string | null;
+          jupiter_request_id?: string;
+          jupiter_status?: string | null;
+          order_transaction?: string;
+          output_mint?: string;
+          relayed_at?: string | null;
+          signature?: string | null;
+          status?: string;
+          taker?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       mock_kyc_submissions: {
         Row: {
-          country: string
-          created_at: string
-          document_type: string
-          email: string
-          full_name: string
-          id: string
-          reference: string
-          review_note: string | null
-          reviewed_at: string | null
-          reviewed_by: string | null
-          status: string
-          updated_at: string
-        }
+          country: string;
+          created_at: string;
+          document_type: string;
+          email: string;
+          full_name: string;
+          id: string;
+          reference: string;
+          review_note: string | null;
+          reviewed_at: string | null;
+          reviewed_by: string | null;
+          status: string;
+          updated_at: string;
+        };
         Insert: {
-          country: string
-          created_at?: string
-          document_type?: string
-          email: string
-          full_name: string
-          id?: string
-          reference: string
-          review_note?: string | null
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status?: string
-          updated_at?: string
-        }
+          country: string;
+          created_at?: string;
+          document_type?: string;
+          email: string;
+          full_name: string;
+          id?: string;
+          reference: string;
+          review_note?: string | null;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
         Update: {
-          country?: string
-          created_at?: string
-          document_type?: string
-          email?: string
-          full_name?: string
-          id?: string
-          reference?: string
-          review_note?: string | null
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
+          country?: string;
+          created_at?: string;
+          document_type?: string;
+          email?: string;
+          full_name?: string;
+          id?: string;
+          reference?: string;
+          review_note?: string | null;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       mock_payout_transfers: {
         Row: {
-          admin_note: string | null
-          created_at: string
-          funded_at: string | null
-          fx_rate: number
-          id: string
-          kyc_submission_id: string | null
-          partner_reference: string | null
-          payment_rail: string
-          payment_status: string
-          payout_amount: number
-          payout_currency: string
-          quote_status: string
-          recipient_name: string
-          reference: string
-          send_amount: number
-          send_currency: string
-          sender_name: string
-          settled_at: string | null
-          solana_tx_signature: string | null
-          timeline_note: string | null
-          total_fee: number
-          updated_at: string
-          updated_by: string | null
-        }
+          admin_note: string | null;
+          created_at: string;
+          funded_at: string | null;
+          fx_rate: number;
+          id: string;
+          kyc_submission_id: string | null;
+          partner_reference: string | null;
+          payment_rail: string;
+          payment_status: string;
+          payout_amount: number;
+          payout_currency: string;
+          quote_status: string;
+          recipient_name: string;
+          reference: string;
+          send_amount: number;
+          send_currency: string;
+          sender_name: string;
+          settled_at: string | null;
+          solana_tx_signature: string | null;
+          timeline_note: string | null;
+          total_fee: number;
+          updated_at: string;
+          updated_by: string | null;
+        };
         Insert: {
-          admin_note?: string | null
-          created_at?: string
-          funded_at?: string | null
-          fx_rate: number
-          id?: string
-          kyc_submission_id?: string | null
-          partner_reference?: string | null
-          payment_rail?: string
-          payment_status?: string
-          payout_amount: number
-          payout_currency: string
-          quote_status?: string
-          recipient_name: string
-          reference: string
-          send_amount: number
-          send_currency?: string
-          sender_name: string
-          settled_at?: string | null
-          solana_tx_signature?: string | null
-          timeline_note?: string | null
-          total_fee?: number
-          updated_at?: string
-          updated_by?: string | null
-        }
+          admin_note?: string | null;
+          created_at?: string;
+          funded_at?: string | null;
+          fx_rate: number;
+          id?: string;
+          kyc_submission_id?: string | null;
+          partner_reference?: string | null;
+          payment_rail?: string;
+          payment_status?: string;
+          payout_amount: number;
+          payout_currency: string;
+          quote_status?: string;
+          recipient_name: string;
+          reference: string;
+          send_amount: number;
+          send_currency?: string;
+          sender_name: string;
+          settled_at?: string | null;
+          solana_tx_signature?: string | null;
+          timeline_note?: string | null;
+          total_fee?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
         Update: {
-          admin_note?: string | null
-          created_at?: string
-          funded_at?: string | null
-          fx_rate?: number
-          id?: string
-          kyc_submission_id?: string | null
-          partner_reference?: string | null
-          payment_rail?: string
-          payment_status?: string
-          payout_amount?: number
-          payout_currency?: string
-          quote_status?: string
-          recipient_name?: string
-          reference?: string
-          send_amount?: number
-          send_currency?: string
-          sender_name?: string
-          settled_at?: string | null
-          solana_tx_signature?: string | null
-          timeline_note?: string | null
-          total_fee?: number
-          updated_at?: string
-          updated_by?: string | null
-        }
+          admin_note?: string | null;
+          created_at?: string;
+          funded_at?: string | null;
+          fx_rate?: number;
+          id?: string;
+          kyc_submission_id?: string | null;
+          partner_reference?: string | null;
+          payment_rail?: string;
+          payment_status?: string;
+          payout_amount?: number;
+          payout_currency?: string;
+          quote_status?: string;
+          recipient_name?: string;
+          reference?: string;
+          send_amount?: number;
+          send_currency?: string;
+          sender_name?: string;
+          settled_at?: string | null;
+          solana_tx_signature?: string | null;
+          timeline_note?: string | null;
+          total_fee?: number;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
         Relationships: [
           {
-            foreignKeyName: "mock_payout_transfers_kyc_submission_id_fkey"
-            columns: ["kyc_submission_id"]
-            isOneToOne: false
-            referencedRelation: "mock_kyc_submissions"
-            referencedColumns: ["id"]
+            foreignKeyName: "mock_payout_transfers_kyc_submission_id_fkey";
+            columns: ["kyc_submission_id"];
+            isOneToOne: false;
+            referencedRelation: "mock_kyc_submissions";
+            referencedColumns: ["id"];
           },
-        ]
-      }
+        ];
+      };
+      payment_fee_ledger: {
+        Row: {
+          amount_minor: number;
+          bps: number | null;
+          category: string;
+          component: string;
+          created_at: string;
+          currency: string;
+          entry_type: string;
+          id: number;
+          payment_id: string;
+          reference: string | null;
+        };
+        Insert: {
+          amount_minor: number;
+          bps?: number | null;
+          category: string;
+          component?: string;
+          created_at?: string;
+          currency: string;
+          entry_type: string;
+          id?: never;
+          payment_id: string;
+          reference?: string | null;
+        };
+        Update: {
+          amount_minor?: number;
+          bps?: number | null;
+          category?: string;
+          component?: string;
+          created_at?: string;
+          currency?: string;
+          entry_type?: string;
+          id?: never;
+          payment_id?: string;
+          reference?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "payment_fee_ledger_payment_id_fkey";
+            columns: ["payment_id"];
+            isOneToOne: false;
+            referencedRelation: "payments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       payment_events: {
         Row: {
-          created_at: string
-          detail: Json | null
-          from_status: string | null
-          id: number
-          kind: string
-          payment_id: string
-          source: string
-          to_status: string | null
-        }
+          created_at: string;
+          detail: Json | null;
+          from_status: string | null;
+          id: number;
+          kind: string;
+          payment_id: string;
+          source: string;
+          to_status: string | null;
+        };
         Insert: {
-          created_at?: string
-          detail?: Json | null
-          from_status?: string | null
-          id?: never
-          kind: string
-          payment_id: string
-          source: string
-          to_status?: string | null
-        }
+          created_at?: string;
+          detail?: Json | null;
+          from_status?: string | null;
+          id?: never;
+          kind: string;
+          payment_id: string;
+          source: string;
+          to_status?: string | null;
+        };
         Update: {
-          created_at?: string
-          detail?: Json | null
-          from_status?: string | null
-          id?: never
-          kind?: string
-          payment_id?: string
-          source?: string
-          to_status?: string | null
-        }
+          created_at?: string;
+          detail?: Json | null;
+          from_status?: string | null;
+          id?: never;
+          kind?: string;
+          payment_id?: string;
+          source?: string;
+          to_status?: string | null;
+        };
         Relationships: [
           {
-            foreignKeyName: "payment_events_payment_id_fkey"
-            columns: ["payment_id"]
-            isOneToOne: false
-            referencedRelation: "payments"
-            referencedColumns: ["id"]
+            foreignKeyName: "payment_events_payment_id_fkey";
+            columns: ["payment_id"];
+            isOneToOne: false;
+            referencedRelation: "payments";
+            referencedColumns: ["id"];
           },
-        ]
-      }
+        ];
+      };
       payment_swaps: {
         Row: {
-          actual_in_minor: number | null
-          actual_out_minor: number | null
-          attempt: number
-          created_at: string
-          failure_reason: string | null
-          id: string
-          in_amount_minor: number
-          input_mint: string
-          jupiter_error: string | null
-          jupiter_request_id: string
-          jupiter_status: string | null
-          last_valid_block_height: number | null
-          min_out_minor: number
-          order_message_sha256: string
-          order_transaction: string
-          output_mint: string
-          payment_id: string
-          price_impact_pct: number | null
-          shortfall_minor: number
-          signature: string | null
-          slippage_bps: number | null
-          status: string
-          swap_mode: string
-          taker: string
-          updated_at: string
-        }
+          actual_in_minor: number | null;
+          actual_out_minor: number | null;
+          attempt: number;
+          created_at: string;
+          failure_reason: string | null;
+          id: string;
+          in_amount_minor: number;
+          input_mint: string;
+          jupiter_error: string | null;
+          jupiter_request_id: string;
+          jupiter_status: string | null;
+          last_valid_block_height: number | null;
+          min_out_minor: number;
+          order_message_sha256: string;
+          order_transaction: string;
+          output_mint: string;
+          payment_id: string;
+          price_impact_pct: number | null;
+          shortfall_minor: number;
+          signature: string | null;
+          slippage_bps: number | null;
+          status: string;
+          swap_mode: string;
+          taker: string;
+          updated_at: string;
+        };
         Insert: {
-          actual_in_minor?: number | null
-          actual_out_minor?: number | null
-          attempt: number
-          created_at?: string
-          failure_reason?: string | null
-          id?: string
-          in_amount_minor: number
-          input_mint: string
-          jupiter_error?: string | null
-          jupiter_request_id: string
-          jupiter_status?: string | null
-          last_valid_block_height?: number | null
-          min_out_minor: number
-          order_message_sha256: string
-          order_transaction: string
-          output_mint: string
-          payment_id: string
-          price_impact_pct?: number | null
-          shortfall_minor: number
-          signature?: string | null
-          slippage_bps?: number | null
-          status?: string
-          swap_mode: string
-          taker: string
-          updated_at?: string
-        }
+          actual_in_minor?: number | null;
+          actual_out_minor?: number | null;
+          attempt: number;
+          created_at?: string;
+          failure_reason?: string | null;
+          id?: string;
+          in_amount_minor: number;
+          input_mint: string;
+          jupiter_error?: string | null;
+          jupiter_request_id: string;
+          jupiter_status?: string | null;
+          last_valid_block_height?: number | null;
+          min_out_minor: number;
+          order_message_sha256: string;
+          order_transaction: string;
+          output_mint: string;
+          payment_id: string;
+          price_impact_pct?: number | null;
+          shortfall_minor: number;
+          signature?: string | null;
+          slippage_bps?: number | null;
+          status?: string;
+          swap_mode: string;
+          taker: string;
+          updated_at?: string;
+        };
         Update: {
-          actual_in_minor?: number | null
-          actual_out_minor?: number | null
-          attempt?: number
-          created_at?: string
-          failure_reason?: string | null
-          id?: string
-          in_amount_minor?: number
-          input_mint?: string
-          jupiter_error?: string | null
-          jupiter_request_id?: string
-          jupiter_status?: string | null
-          last_valid_block_height?: number | null
-          min_out_minor?: number
-          order_message_sha256?: string
-          order_transaction?: string
-          output_mint?: string
-          payment_id?: string
-          price_impact_pct?: number | null
-          shortfall_minor?: number
-          signature?: string | null
-          slippage_bps?: number | null
-          status?: string
-          swap_mode?: string
-          taker?: string
-          updated_at?: string
-        }
+          actual_in_minor?: number | null;
+          actual_out_minor?: number | null;
+          attempt?: number;
+          created_at?: string;
+          failure_reason?: string | null;
+          id?: string;
+          in_amount_minor?: number;
+          input_mint?: string;
+          jupiter_error?: string | null;
+          jupiter_request_id?: string;
+          jupiter_status?: string | null;
+          last_valid_block_height?: number | null;
+          min_out_minor?: number;
+          order_message_sha256?: string;
+          order_transaction?: string;
+          output_mint?: string;
+          payment_id?: string;
+          price_impact_pct?: number | null;
+          shortfall_minor?: number;
+          signature?: string | null;
+          slippage_bps?: number | null;
+          status?: string;
+          swap_mode?: string;
+          taker?: string;
+          updated_at?: string;
+        };
         Relationships: [
           {
-            foreignKeyName: "payment_swaps_payment_id_fkey"
-            columns: ["payment_id"]
-            isOneToOne: false
-            referencedRelation: "payments"
-            referencedColumns: ["id"]
+            foreignKeyName: "payment_swaps_payment_id_fkey";
+            columns: ["payment_id"];
+            isOneToOne: false;
+            referencedRelation: "payments";
+            referencedColumns: ["id"];
           },
-        ]
-      }
+        ];
+      };
       payments: {
         Row: {
-          actual_payout_currency: string | null
-          actual_payout_minor: number | null
-          beneficiary_summary: Json | null
-          created_at: string
-          deposit_address: string | null
-          deposit_amount_minor: number | null
-          deposit_currency: string | null
-          deposit_network: string | null
-          destination_amount_minor: number | null
-          destination_country: string
-          destination_currency: string
-          exchange_rate: number | null
-          failure_reason: string | null
-          fees: Json | null
-          funding_payer: string | null
-          funding_signature: string | null
-          funding_verified_at: string | null
-          id: string
-          payer_wallet: string | null
-          platform_fee_bps: number | null
-          platform_fee_minor: number | null
-          platform_fee_received_minor: number | null
-          platform_fee_wallet: string | null
-          pre_hold_status: string | null
-          purpose_code: string | null
-          quote_expires_at: string | null
-          quote_id: string | null
-          quote_snapshot: Json | null
-          reconciled_at: string | null
-          source_amount_minor: number
-          source_currency: string
-          source_network: string
-          stables_customer_id: string | null
-          status: string
-          transfer_id: string | null
-          transfer_snapshot: Json | null
-          travel_rule_expires_at: string | null
-          travel_rule_reference: string | null
-          travel_rule_requested_at: string | null
-          travel_rule_resolved_at: string | null
-          travel_rule_verification_url: string | null
-          updated_at: string
-          user_id: string
-        }
+          actual_payout_currency: string | null;
+          actual_payout_minor: number | null;
+          beneficiary_summary: Json | null;
+          created_at: string;
+          deposit_address: string | null;
+          deposit_amount_minor: number | null;
+          deposit_currency: string | null;
+          deposit_network: string | null;
+          destination_amount_minor: number | null;
+          destination_country: string;
+          destination_currency: string;
+          exchange_rate: number | null;
+          failure_reason: string | null;
+          fees: Json | null;
+          funding_payer: string | null;
+          funding_signature: string | null;
+          funding_verified_at: string | null;
+          id: string;
+          payer_wallet: string | null;
+          platform_fee_bps: number | null;
+          platform_fee_minor: number | null;
+          platform_fee_max_minor: number | null;
+          platform_fee_min_minor: number | null;
+          platform_fee_received_minor: number | null;
+          platform_fee_rule: string | null;
+          platform_fee_wallet: string | null;
+          pre_hold_status: string | null;
+          pricing_snapshot: Json | null;
+          purpose_code: string | null;
+          quote_expires_at: string | null;
+          quote_id: string | null;
+          quote_snapshot: Json | null;
+          reconciled_at: string | null;
+          source_amount_minor: number;
+          source_currency: string;
+          source_network: string;
+          stables_customer_id: string | null;
+          status: string;
+          transfer_id: string | null;
+          transfer_snapshot: Json | null;
+          travel_rule_expires_at: string | null;
+          travel_rule_reference: string | null;
+          travel_rule_requested_at: string | null;
+          travel_rule_resolved_at: string | null;
+          travel_rule_verification_url: string | null;
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          actual_payout_currency?: string | null
-          actual_payout_minor?: number | null
-          beneficiary_summary?: Json | null
-          created_at?: string
-          deposit_address?: string | null
-          deposit_amount_minor?: number | null
-          deposit_currency?: string | null
-          deposit_network?: string | null
-          destination_amount_minor?: number | null
-          destination_country: string
-          destination_currency: string
-          exchange_rate?: number | null
-          failure_reason?: string | null
-          fees?: Json | null
-          funding_payer?: string | null
-          funding_signature?: string | null
-          funding_verified_at?: string | null
-          id?: string
-          payer_wallet?: string | null
-          platform_fee_bps?: number | null
-          platform_fee_minor?: number | null
-          platform_fee_received_minor?: number | null
-          platform_fee_wallet?: string | null
-          pre_hold_status?: string | null
-          purpose_code?: string | null
-          quote_expires_at?: string | null
-          quote_id?: string | null
-          quote_snapshot?: Json | null
-          reconciled_at?: string | null
-          source_amount_minor: number
-          source_currency?: string
-          source_network?: string
-          stables_customer_id?: string | null
-          status?: string
-          transfer_id?: string | null
-          transfer_snapshot?: Json | null
-          travel_rule_expires_at?: string | null
-          travel_rule_reference?: string | null
-          travel_rule_requested_at?: string | null
-          travel_rule_resolved_at?: string | null
-          travel_rule_verification_url?: string | null
-          updated_at?: string
-          user_id: string
-        }
+          actual_payout_currency?: string | null;
+          actual_payout_minor?: number | null;
+          beneficiary_summary?: Json | null;
+          created_at?: string;
+          deposit_address?: string | null;
+          deposit_amount_minor?: number | null;
+          deposit_currency?: string | null;
+          deposit_network?: string | null;
+          destination_amount_minor?: number | null;
+          destination_country: string;
+          destination_currency: string;
+          exchange_rate?: number | null;
+          failure_reason?: string | null;
+          fees?: Json | null;
+          funding_payer?: string | null;
+          funding_signature?: string | null;
+          funding_verified_at?: string | null;
+          id?: string;
+          payer_wallet?: string | null;
+          platform_fee_bps?: number | null;
+          platform_fee_minor?: number | null;
+          platform_fee_max_minor?: number | null;
+          platform_fee_min_minor?: number | null;
+          platform_fee_received_minor?: number | null;
+          platform_fee_rule?: string | null;
+          platform_fee_wallet?: string | null;
+          pre_hold_status?: string | null;
+          pricing_snapshot?: Json | null;
+          purpose_code?: string | null;
+          quote_expires_at?: string | null;
+          quote_id?: string | null;
+          quote_snapshot?: Json | null;
+          reconciled_at?: string | null;
+          source_amount_minor: number;
+          source_currency?: string;
+          source_network?: string;
+          stables_customer_id?: string | null;
+          status?: string;
+          transfer_id?: string | null;
+          transfer_snapshot?: Json | null;
+          travel_rule_expires_at?: string | null;
+          travel_rule_reference?: string | null;
+          travel_rule_requested_at?: string | null;
+          travel_rule_resolved_at?: string | null;
+          travel_rule_verification_url?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          actual_payout_currency?: string | null
-          actual_payout_minor?: number | null
-          beneficiary_summary?: Json | null
-          created_at?: string
-          deposit_address?: string | null
-          deposit_amount_minor?: number | null
-          deposit_currency?: string | null
-          deposit_network?: string | null
-          destination_amount_minor?: number | null
-          destination_country?: string
-          destination_currency?: string
-          exchange_rate?: number | null
-          failure_reason?: string | null
-          fees?: Json | null
-          funding_payer?: string | null
-          funding_signature?: string | null
-          funding_verified_at?: string | null
-          id?: string
-          payer_wallet?: string | null
-          platform_fee_bps?: number | null
-          platform_fee_minor?: number | null
-          platform_fee_received_minor?: number | null
-          platform_fee_wallet?: string | null
-          pre_hold_status?: string | null
-          purpose_code?: string | null
-          quote_expires_at?: string | null
-          quote_id?: string | null
-          quote_snapshot?: Json | null
-          reconciled_at?: string | null
-          source_amount_minor?: number
-          source_currency?: string
-          source_network?: string
-          stables_customer_id?: string | null
-          status?: string
-          transfer_id?: string | null
-          transfer_snapshot?: Json | null
-          travel_rule_expires_at?: string | null
-          travel_rule_reference?: string | null
-          travel_rule_requested_at?: string | null
-          travel_rule_resolved_at?: string | null
-          travel_rule_verification_url?: string | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
+          actual_payout_currency?: string | null;
+          actual_payout_minor?: number | null;
+          beneficiary_summary?: Json | null;
+          created_at?: string;
+          deposit_address?: string | null;
+          deposit_amount_minor?: number | null;
+          deposit_currency?: string | null;
+          deposit_network?: string | null;
+          destination_amount_minor?: number | null;
+          destination_country?: string;
+          destination_currency?: string;
+          exchange_rate?: number | null;
+          failure_reason?: string | null;
+          fees?: Json | null;
+          funding_payer?: string | null;
+          funding_signature?: string | null;
+          funding_verified_at?: string | null;
+          id?: string;
+          payer_wallet?: string | null;
+          platform_fee_bps?: number | null;
+          platform_fee_minor?: number | null;
+          platform_fee_max_minor?: number | null;
+          platform_fee_min_minor?: number | null;
+          platform_fee_received_minor?: number | null;
+          platform_fee_rule?: string | null;
+          platform_fee_wallet?: string | null;
+          pre_hold_status?: string | null;
+          pricing_snapshot?: Json | null;
+          purpose_code?: string | null;
+          quote_expires_at?: string | null;
+          quote_id?: string | null;
+          quote_snapshot?: Json | null;
+          reconciled_at?: string | null;
+          source_amount_minor?: number;
+          source_currency?: string;
+          source_network?: string;
+          stables_customer_id?: string | null;
+          status?: string;
+          transfer_id?: string | null;
+          transfer_snapshot?: Json | null;
+          travel_rule_expires_at?: string | null;
+          travel_rule_reference?: string | null;
+          travel_rule_requested_at?: string | null;
+          travel_rule_resolved_at?: string | null;
+          travel_rule_verification_url?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       stables_customers: {
         Row: {
-          base_payout_status: string | null
-          created_at: string
-          first_name: string | null
-          kyc_link: string | null
-          kyc_link_expires_at: string | null
-          last_name: string | null
-          stables_customer_id: string
-          updated_at: string
-          user_id: string
-          verification_status: string | null
-          verification_sub_status: string[] | null
-        }
+          base_payout_status: string | null;
+          created_at: string;
+          first_name: string | null;
+          kyc_link: string | null;
+          kyc_link_expires_at: string | null;
+          last_name: string | null;
+          stables_customer_id: string;
+          updated_at: string;
+          user_id: string;
+          verification_status: string | null;
+          verification_sub_status: string[] | null;
+          verified_at: string | null;
+        };
         Insert: {
-          base_payout_status?: string | null
-          created_at?: string
-          first_name?: string | null
-          kyc_link?: string | null
-          kyc_link_expires_at?: string | null
-          last_name?: string | null
-          stables_customer_id: string
-          updated_at?: string
-          user_id: string
-          verification_status?: string | null
-          verification_sub_status?: string[] | null
-        }
+          base_payout_status?: string | null;
+          created_at?: string;
+          first_name?: string | null;
+          kyc_link?: string | null;
+          kyc_link_expires_at?: string | null;
+          last_name?: string | null;
+          stables_customer_id: string;
+          updated_at?: string;
+          user_id: string;
+          verification_status?: string | null;
+          verification_sub_status?: string[] | null;
+          verified_at?: string | null;
+        };
         Update: {
-          base_payout_status?: string | null
-          created_at?: string
-          first_name?: string | null
-          kyc_link?: string | null
-          kyc_link_expires_at?: string | null
-          last_name?: string | null
-          stables_customer_id?: string
-          updated_at?: string
-          user_id?: string
-          verification_status?: string | null
-          verification_sub_status?: string[] | null
-        }
-        Relationships: []
-      }
+          base_payout_status?: string | null;
+          created_at?: string;
+          first_name?: string | null;
+          kyc_link?: string | null;
+          kyc_link_expires_at?: string | null;
+          last_name?: string | null;
+          stables_customer_id?: string;
+          updated_at?: string;
+          user_id?: string;
+          verification_status?: string | null;
+          verification_sub_status?: string[] | null;
+          verified_at?: string | null;
+        };
+        Relationships: [];
+      };
+      user_wallets: {
+        Row: {
+          address: string;
+          chain: string;
+          id: string;
+          last_authenticated_at: string | null;
+          linked_at: string;
+          source: string;
+          user_id: string;
+        };
+        Insert: {
+          address: string;
+          chain: string;
+          id?: string;
+          last_authenticated_at?: string | null;
+          linked_at?: string;
+          source?: string;
+          user_id: string;
+        };
+        Update: {
+          address?: string;
+          chain?: string;
+          id?: string;
+          last_authenticated_at?: string | null;
+          linked_at?: string;
+          source?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      app_mode_events: {
+        Row: {
+          created_at: string;
+          detail: Json;
+          event: string;
+          id: number;
+          mode: string;
+          ok: boolean;
+          user_id: string | null;
+        };
+        Insert: {
+          created_at?: string;
+          detail?: Json;
+          event: string;
+          id?: never;
+          mode: string;
+          ok: boolean;
+          user_id?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          detail?: Json;
+          event?: string;
+          id?: never;
+          mode?: string;
+          ok?: boolean;
+          user_id?: string | null;
+        };
+        Relationships: [];
+      };
+      identity_events: {
+        Row: {
+          created_at: string;
+          detail: Json;
+          event: string;
+          id: number;
+          user_id: string;
+          wallet_address: string | null;
+        };
+        Insert: {
+          created_at?: string;
+          detail?: Json;
+          event: string;
+          id?: never;
+          user_id: string;
+          wallet_address?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          detail?: Json;
+          event?: string;
+          id?: never;
+          user_id?: string;
+          wallet_address?: string | null;
+        };
+        Relationships: [];
+      };
       stables_webhook_events: {
         Row: {
-          event_id: string
-          event_object_id: string | null
-          event_object_status: string | null
-          event_type: string
-          payload: Json
-          process_error: string | null
-          processed_at: string | null
-          received_at: string
-        }
+          event_id: string;
+          event_object_id: string | null;
+          event_object_status: string | null;
+          event_type: string;
+          payload: Json;
+          process_error: string | null;
+          processed_at: string | null;
+          received_at: string;
+        };
         Insert: {
-          event_id: string
-          event_object_id?: string | null
-          event_object_status?: string | null
-          event_type: string
-          payload: Json
-          process_error?: string | null
-          processed_at?: string | null
-          received_at?: string
-        }
+          event_id: string;
+          event_object_id?: string | null;
+          event_object_status?: string | null;
+          event_type: string;
+          payload: Json;
+          process_error?: string | null;
+          processed_at?: string | null;
+          received_at?: string;
+        };
         Update: {
-          event_id?: string
-          event_object_id?: string | null
-          event_object_status?: string | null
-          event_type?: string
-          payload?: Json
-          process_error?: string | null
-          processed_at?: string | null
-          received_at?: string
-        }
-        Relationships: []
-      }
+          event_id?: string;
+          event_object_id?: string | null;
+          event_object_status?: string | null;
+          event_type?: string;
+          payload?: Json;
+          process_error?: string | null;
+          processed_at?: string | null;
+          received_at?: string;
+        };
+        Relationships: [];
+      };
       user_roles: {
         Row: {
-          created_at: string
-          id: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
+          created_at: string;
+          id: string;
+          role: Database["public"]["Enums"]["app_role"];
+          user_id: string;
+        };
         Insert: {
-          created_at?: string
-          id?: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
+          created_at?: string;
+          id?: string;
+          role: Database["public"]["Enums"]["app_role"];
+          user_id: string;
+        };
         Update: {
-          created_at?: string
-          id?: string
-          role?: Database["public"]["Enums"]["app_role"]
-          user_id?: string
-        }
-        Relationships: []
-      }
-    }
+          created_at?: string;
+          id?: string;
+          role?: Database["public"]["Enums"]["app_role"];
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+    };
     Views: {
-      [_ in never]: never
-    }
+      [_ in never]: never;
+    };
     Functions: {
       has_role: {
         Args: {
-          _role: Database["public"]["Enums"]["app_role"]
-          _user_id: string
-        }
-        Returns: boolean
-      }
-    }
+          _role: Database["public"]["Enums"]["app_role"];
+          _user_id: string;
+        };
+        Returns: boolean;
+      };
+    };
     Enums: {
-      app_role: "admin" | "reviewer" | "user"
-    }
+      app_role: "admin" | "reviewer" | "user";
+    };
     CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-}
+      [_ in never]: never;
+    };
+  };
+};
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">;
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">];
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
       DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R
+      Row: infer R;
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] & DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R;
       }
       ? R
       : never
-    : never
+    : never;
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
+      Insert: infer I;
     }
     ? I
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
+        Insert: infer I;
       }
       ? I
       : never
-    : never
+    : never;
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
+      Update: infer U;
     }
     ? U
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
+        Update: infer U;
       }
       ? U
       : never
-    : never
+    : never;
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
   EnumName extends (DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
     : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
     ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+    : never;
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["CompositeTypes"] | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
     : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
+    : never;
 
 export const Constants = {
   public: {
@@ -825,4 +971,4 @@ export const Constants = {
       app_role: ["admin", "reviewer", "user"],
     },
   },
-} as const
+} as const;

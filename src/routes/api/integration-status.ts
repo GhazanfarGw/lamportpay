@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { recordModeObserved } from "@/lib/app-mode-log.server";
+import { currentMode, publicModeStatus } from "@/lib/app-mode.server";
 import { getBusinessSettings } from "@/lib/business-settings.server";
 import { getPaymentLimits } from "@/lib/payments/limits.server";
+import { configuredPayoutCountries } from "@/lib/payout-countries";
 import { getStablesConfig, getStablesWebhookSecret } from "@/lib/stables/config.server";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 
@@ -22,6 +25,9 @@ export const Route = createFileRoute("/api/integration-status")({
   server: {
     handlers: {
       GET: async () => {
+        // The mode is the server's: this is what the header indicator shows.
+        const modeStatus = currentMode();
+        void recordModeObserved(modeStatus);
         const stables = getStablesConfig();
         const jupiterConfigured = Boolean(process.env["JUPITER_API_KEY"]);
         const stablesConfigured = stables.configured;
@@ -38,6 +44,7 @@ export const Route = createFileRoute("/api/integration-status")({
 
         return Response.json(
           {
+            mode: publicModeStatus(modeStatus),
             providers: [
               {
                 name: "Jupiter",
@@ -81,12 +88,19 @@ export const Route = createFileRoute("/api/integration-status")({
               kycEnabled: stablesConfigured,
               webhookVerification: Boolean(getStablesWebhookSecret()),
               swapLimits: "0.001 – 0.01 SOL",
-              paymentLimitsUsdc: paymentLimits("usdc"),
+              paymentLimitsUsdc: settings?.paymentLimits.usdc ?? paymentLimits("usdc"),
               paymentLimits: Object.fromEntries(
-                coins.map((currency) => [currency, paymentLimits(currency)]),
+                coins.map((currency) => [
+                  currency,
+                  settings?.paymentLimits[currency] ?? paymentLimits(currency),
+                ]),
               ),
               paymentCurrencies: coins,
               platformFeeBps: settings?.conversionFeeBps ?? null,
+              platformFeeMin: settings?.feeMin ?? null,
+              // Countries the /pay picker offers (PAYOUT_COUNTRIES or the documented default).
+              payoutCountries: configuredPayoutCountries(process.env["PAYOUT_COUNTRIES"]),
+              platformFeeMax: settings?.feeMax ?? null,
               outputDestination: "connected wallet only",
             },
           },

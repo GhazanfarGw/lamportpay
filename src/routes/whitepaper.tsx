@@ -115,18 +115,26 @@ const sections: { title: string; body: React.ReactNode }[] = [
     title: "9. Settlement partner layer",
     body: (
       <p>
-        Start with a single regulated payout infrastructure partner, then add further partners later,
-        Bitso, and Yellow Card.
+        Start with a single regulated payout infrastructure partner, then add further partners
+        later, Bitso, and Yellow Card.
       </p>
     ),
   },
-  { title: "10. Supported demo assets", body: <p>USDC, SOL, USDT, JUP, RAY, PYTH, BONK.</p> },
   {
-    title: "11. Supported demo corridors",
+    title: "10. Supported assets",
     body: (
       <p>
-        Pakistan PKR, Nigeria NGN, Philippines PHP, Mexico MXN, Colombia COP, Brazil BRL, Kenya KES,
-        United Kingdom GBP and United States USD, subject to our payout partner's live support.
+        USDC on Solana for payouts. SOL can be swapped to USDC in the user's own wallet first. More
+        tokens are planned.
+      </p>
+    ),
+  },
+  {
+    title: "11. Supported countries and currencies",
+    body: (
+      <p>
+        Whatever our payout partner supports, checked live with a quote before a payment is created.
+        There is no fixed list in LamportPay.
       </p>
     ),
   },
@@ -260,7 +268,13 @@ function Whitepaper() {
           </div>
         </div>
       </section>
-      <FurtherReading slugs={["why-stablecoins-settle-cross-border-payments", "web3-payment-rails-architecture", "compliance-roles-in-crypto-payouts"]} />
+      <FurtherReading
+        slugs={[
+          "why-stablecoins-settle-cross-border-payments",
+          "web3-payment-rails-architecture",
+          "compliance-roles-in-crypto-payouts",
+        ]}
+      />
     </SiteLayout>
   );
 }

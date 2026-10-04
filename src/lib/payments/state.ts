@@ -120,7 +120,12 @@ export function checkTransition(
           ? allow()
           : deny(`KYC can only be rejected before approval.`);
       case "QUOTED":
-        return from === "KYC_APPROVED" ? allow() : deny(`A quote needs an approved customer.`);
+        // A quote is only a price (owner decision 3 Oct 2026: show the quote
+        // before verification). Verification is enforced where it matters: the
+        // transfer (payout) is created only for a verified customer.
+        return from === "PAYMENT_CREATED" || from === "KYC_PENDING" || from === "KYC_APPROVED"
+          ? allow()
+          : deny(`${from} cannot be quoted.`);
       case "CANCELLED":
         return allow();
       default:

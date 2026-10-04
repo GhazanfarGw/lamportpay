@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 
-import { SiteLayout } from "@/components/site/Layout";
+import { AppLayout } from "@/components/app/AppLayout";
 import { PaymentReceipt } from "@/components/site/PaymentReceipt";
 import { paymentApi } from "@/lib/payments/api-client";
 import type { PaymentView } from "@/lib/payments/view";
@@ -27,7 +27,7 @@ function ReceiptPage() {
   const p = payment.data;
 
   return (
-    <SiteLayout>
+    <AppLayout>
       <div className="max-w-3xl mx-auto px-5 py-14 md:py-20 space-y-6">
         <Link
           to="/payments"
@@ -65,6 +65,6 @@ function ReceiptPage() {
           />
         )}
       </div>
-    </SiteLayout>
+    </AppLayout>
   );
 }

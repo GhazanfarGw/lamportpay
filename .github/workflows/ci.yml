@@ -1,0 +1,52 @@
+# Phase 3 (C08): checks on every push and pull request.
+# No secrets are used or needed: unit tests run against an in-memory database
+# and mocked providers; end-to-end tests (which need a running dev server and
+# the dev Supabase project) stay a local step (scripts/e2e-dev.mjs).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: No env files or keys committed
+        run: node scripts/check-repo-secrets.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint (correctness rules; formatting clean-up is tracked as C32)
+        run: npm run lint:ci
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Production build
+        run: npm run build
+
+      - name: No server secrets in the client bundle
+        run: node scripts/check-client-bundle.mjs
+
+      - name: Dependency audit (production, high and critical fail the build)
+        run: npm audit --omit=dev --audit-level=high

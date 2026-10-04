@@ -37,6 +37,12 @@ function countryName(code: string) {
   }
 }
 
+/** Amount sent for conversion plus LamportPay's fee, in minor units of the source coin. */
+function totalMinor(p: PaymentView): string | null {
+  if (p.source.amountMinor === null) return null;
+  return (BigInt(p.source.amountMinor) + BigInt(p.platformFee?.amountMinor ?? "0")).toString();
+}
+
 function feeLabel(kind: string) {
   return kind.replace(/_fee$/, "").replace(/_/g, " ");
 }
@@ -106,38 +112,49 @@ export function PaymentReceipt({
       </Section>
 
       <Section title="Amounts">
+        {/* What leaves the wallet = amount converted + LamportPay's fee (owner model:
+            the fee comes out of what the user sends). */}
         <Row
-          k={`Amount sent (${p.source.currency.toUpperCase()} on Solana)`}
-          v={money(p.source.amountMinor, p.source.currency)}
+          k="Total from your wallet"
+          v={<strong>{money(totalMinor(p), p.source.currency)}</strong>}
         />
         <Row
-          k="Exchange rate"
+          k="LamportPay service fee"
+          v={
+            p.platformFee
+              ? money(p.platformFee.amountMinor, p.platformFee.currency)
+              : fees.lamportpay
+                ? money(fees.lamportpay.amountMinor, fees.lamportpay.currency)
+                : "None"
+          }
+        />
+        <Row
+          k={`Sent for conversion (${p.source.currency.toUpperCase()} on Solana)`}
+          v={money(p.source.amountMinor, p.source.currency)}
+        />
+        {fees.stables
+          .filter((f) => BigInt(f.amountMinor) !== 0n)
+          .map((f) => (
+            <Row
+              key={f.kind}
+              k={`Payout partner: ${feeLabel(f.kind)} fee`}
+              v={money(f.amountMinor, f.currency)}
+            />
+          ))}
+        {fees.total && (
+          <Row
+            k="Payout partner fees (total)"
+            v={money(fees.total.amountMinor, fees.total.currency)}
+          />
+        )}
+        <Row
+          k="Exchange rate (after partner fees)"
           v={
             p.exchangeRate === null
               ? "—"
-              : `1 ${p.source.currency.toUpperCase()} = ${p.exchangeRate} ${p.destination.currency.toUpperCase()}`
+              : `1 ${p.source.currency.toUpperCase()} = ${Number(Number(p.exchangeRate).toPrecision(6))} ${p.destination.currency.toUpperCase()}`
           }
         />
-        <Row
-          k="LamportPay fee"
-          v={
-            fees.lamportpay ? money(fees.lamportpay.amountMinor, fees.lamportpay.currency) : "None"
-          }
-        />
-        {fees.stables.length === 0 ? (
-          <Row k="Stables fees" v={fees.total ? "Included in the total below" : "—"} />
-        ) : (
-          fees.stables.map((f) => (
-            <Row
-              key={f.kind}
-              k={`Stables ${feeLabel(f.kind)} fee`}
-              v={money(f.amountMinor, f.currency)}
-            />
-          ))
-        )}
-        {fees.total && (
-          <Row k="Total fees" v={money(fees.total.amountMinor, fees.total.currency)} />
-        )}
         <Row
           k={received ? "Bank account received" : "Bank account receives (quoted)"}
           v={

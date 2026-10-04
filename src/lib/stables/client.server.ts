@@ -8,6 +8,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 
+import { assertEndpointAllowed } from "@/lib/app-mode.server";
 import type { StablesConfig } from "./config.server";
 import type {
   CreateQuoteRequest,
@@ -72,6 +73,10 @@ async function request<T>(
       throw new Error(`Idempotency-Key is required for ${method} ${path}.`);
     headers["Idempotency-Key"] = options.idempotencyKey;
   }
+
+  // Last line of defence: TEST MODE never calls production Stables (and LIVE
+  // never the sandbox), whatever config object was passed in.
+  assertEndpointAllowed("stables", config.apiUrl);
 
   let lastError: StablesError | null = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

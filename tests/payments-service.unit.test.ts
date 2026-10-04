@@ -5,6 +5,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LIVE_ENV, MODE_ENV_KEYS } from "./support/app-mode";
+
+// Real-funds logic is tested as LIVE MODE would run it: lock mocked open, full
+// live config in beforeEach. The app itself keeps the lock closed.
+vi.mock("@/lib/app-mode-lock", () => ({ LIVE_MODE_CODE_UNLOCKED: true }));
 vi.mock("@/integrations/supabase/client.server", async () => {
   const { createFakeSupabase } = await import("./support/fake-supabase");
   return { supabaseAdmin: createFakeSupabase() };
@@ -91,7 +96,9 @@ const ENV_KEYS = [
   "PAYMENT_MIN_USDT",
   "PAYMENT_MAX_USDT",
 ] as const;
-const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+const savedEnv = Object.fromEntries(
+  [...ENV_KEYS, ...MODE_ENV_KEYS].map((k) => [k, process.env[k]]),
+);
 
 const RETURN_URL = "https://lamportpay.test/pay?kyc=returned";
 const ID_NAME = { firstName: "Ada", lastName: "Lovelace" };
@@ -102,6 +109,7 @@ beforeEach(() => {
   clearBusinessSettingsCache();
   vi.resetAllMocks();
   Object.assign(process.env, {
+    ...LIVE_ENV,
     STABLES_API_KEY: "sti_live_fixture",
     STABLES_API_URL: "https://api.stables.money",
     STABLES_WEBHOOK_SECRET: WEBHOOK_SECRET,
@@ -132,7 +140,10 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-  for (const k of ENV_KEYS) process.env[k] = savedEnv[k] ?? "";
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
 });
 
 // ------------------------------------------------------------------ helpers
@@ -451,6 +462,20 @@ describe("payment limits", () => {
     ).rejects.toMatchObject({ message: "Payments must be between 30 and 40 USDT." });
   });
 
+  it("uses limits an admin set, over .env, for new payments and quotes (C07)", async () => {
+    await updateBusinessSettings(
+      { paymentLimits: { usdc: { min_minor: 60_000_000, max_minor: 80_000_000 } } },
+      "00000000-0000-4000-8000-000000000001",
+    );
+    await expect(
+      service.createPayment(user, { amount: "55", country: "IN", currency: "inr" }),
+    ).rejects.toMatchObject({
+      code: "amount_out_of_range",
+      message: "Payments must be between 60 and 80 USDC.",
+    });
+    await expect(createPayment("70")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
+  });
+
   it("refuses to take payments with an inverted configuration", async () => {
     process.env["PAYMENT_MIN_USDC"] = "200";
     process.env["PAYMENT_MAX_USDC"] = "150";
@@ -514,6 +539,97 @@ describe("starting KYC", () => {
       first_name: "Ada",
       last_name: "Lovelace",
       redirect: { success_url: RETURN_URL, reject_url: RETURN_URL },
+    });
+  });
+
+  it("asks a wallet-only account (no email) for an email once, and passes it to Stables", async () => {
+    const walletUser = { ...user, email: undefined };
+    await expect(
+      service.startKyc(walletUser, { ...ID_NAME, returnUrl: RETURN_URL }),
+    ).rejects.toMatchObject({ status: 400, code: "email_required" });
+    expect(api.createCustomerWithVerificationLink).not.toHaveBeenCalled();
+
+    api.createCustomerWithVerificationLink.mockResolvedValue({
+      customer_id: "cus_1",
+      kyc_link: "https://kyc.example/1",
+    });
+    await service.startKyc(walletUser, {
+      ...ID_NAME,
+      email: "ada@example.com",
+      returnUrl: RETURN_URL,
+    });
+    expect(api.createCustomerWithVerificationLink.mock.lastCall![1]).toMatchObject({
+      email: "ada@example.com",
+    });
+    // The email is not stored by LamportPay.
+    expect(JSON.stringify(db.table("stables_customers"))).not.toContain("ada@example.com");
+  });
+
+  it("prefers the account email over a typed one", async () => {
+    api.createCustomerWithVerificationLink.mockResolvedValue({
+      customer_id: "cus_1",
+      kyc_link: "https://kyc.example/1",
+    });
+    await service.startKyc(user, { ...ID_NAME, email: "other@example.com", returnUrl: RETURN_URL });
+    expect(api.createCustomerWithVerificationLink.mock.lastCall![1]).toMatchObject({
+      email: user.email,
+    });
+  });
+});
+
+describe("wallet-first identity", () => {
+  it("refuses a payment from a wallet other than the one the account signed in with", async () => {
+    const signedInWith = newWallet();
+    const walletUser = { ...user, email: null, wallets: [signedInWith] };
+    await expect(
+      service.createPayment(walletUser, {
+        amount: "75",
+        country: "in",
+        currency: "INR",
+        wallet: newWallet(),
+      }),
+    ).rejects.toMatchObject({ status: 403, code: "wallet_not_linked" });
+    expect(api.createQuote).not.toHaveBeenCalled();
+    expect(db.table("payments")).toHaveLength(0);
+  });
+
+  it("accepts the linked wallet, and any wallet for an email account", async () => {
+    const linked = newWallet();
+    api.createQuote.mockResolvedValue(quote("75", "inr", "6232.5"));
+    await service.createPayment(
+      { ...user, wallets: [linked] },
+      { amount: "75", country: "in", currency: "INR", wallet: linked },
+    );
+    await service.createPayment(
+      { ...user, wallets: [] },
+      { amount: "75", country: "in", currency: "INR", wallet: newWallet() },
+    );
+    expect(db.table("payments")).toHaveLength(2);
+  });
+
+  it("answers a verified returning customer from our record, without asking Stables", async () => {
+    await quotedPayment();
+    // The first status check reads Stables once and stores "approved"...
+    await service.getKycStatus(user);
+    api.getCustomer.mockClear();
+    // ...after which the customer is answered from LamportPay's record.
+    const kyc = await service.getKycStatus(user);
+    expect(kyc).toMatchObject({ state: "kyc_verified", providerUnavailable: false });
+    expect(api.getCustomer).not.toHaveBeenCalled();
+  });
+
+  it("never upgrades an open verification when Stables is unreachable", async () => {
+    await paymentAwaitingKyc();
+    api.getCustomer.mockRejectedValue(new StablesError("Service unavailable", 503));
+    const kyc = await service.getKycStatus(user);
+    expect(kyc).toMatchObject({ state: "kyc_pending", providerUnavailable: true });
+    expect(kyc.verifiedAt).toBeNull();
+  });
+
+  it("reports not_registered before any Stables customer exists", async () => {
+    expect(await service.getKycStatus(user)).toMatchObject({
+      state: "not_registered",
+      status: "not_started",
     });
   });
 });
@@ -791,8 +907,10 @@ describe("deposit verification", () => {
     const { id } = await paymentAwaitingFunds("75");
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    process.env["LAMPORTPAY_MODE"] = "test";
+    // TEST MODE (sandbox): moving real funds is impossible, refused before anything else.
     await expect(service.verifyFunding(user, id, fakeSignature())).rejects.toMatchObject({
-      code: "sandbox_funding_disabled",
+      code: "test_mode_no_real_funds",
     });
   });
 });
@@ -1386,6 +1504,7 @@ describe("sandbox deposit simulation", () => {
     const { id } = await paymentAwaitingFunds();
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    process.env["LAMPORTPAY_MODE"] = "test";
     api.simulateTransferDeposit.mockResolvedValue({
       transfer_id: "tr_1",
       simulation_id: "sim_1",
@@ -1407,6 +1526,7 @@ describe("sandbox deposit simulation", () => {
     const payment = await seedTransferPayment("IN_PROGRESS");
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+    process.env["LAMPORTPAY_MODE"] = "test";
     await expect(service.simulateSandboxDeposit(payment.id, admin)).rejects.toMatchObject({
       status: 409,
     });
@@ -1417,10 +1537,11 @@ describe("sandbox deposit instructions", () => {
   // What the Stables sandbox returns instead of a Solana address (2026-09-27).
   const PLACEHOLDER = "sandbox:solana:45d790d05dc156bfb0e095e5a52f528c";
 
-  async function transferWith(depositAddress: string) {
-    const payment = await quotedPayment("75");
+  // TEST MODE (the sandbox) allows 1–5,000 USDC per payment; LIVE uses this file's 50–100.
+  async function transferWith(depositAddress: string, amount = "75") {
+    const payment = await quotedPayment(amount);
     api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
-    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", depositAddress, "75"));
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", depositAddress, amount));
     return service.createPaymentTransfer(user, payment.id, {
       purposeCode: "FAMILY_MAINTENANCE",
       beneficiary: BENEFICIARY,
@@ -1430,7 +1551,8 @@ describe("sandbox deposit instructions", () => {
   it("records the sandbox placeholder as a reference, not as an address or a failure", async () => {
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
-    const view = await transferWith(PLACEHOLDER);
+    process.env["LAMPORTPAY_MODE"] = "test";
+    const view = await transferWith(PLACEHOLDER, "9");
 
     expect(view).toMatchObject({ status: "AWAITING_FUNDS_COLLECTION", failureReason: null });
     expect(view.deposit).toBeNull();
@@ -1444,14 +1566,15 @@ describe("sandbox deposit instructions", () => {
   it("still checks the placeholder's amount against the quote", async () => {
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
-    const payment = await quotedPayment("75");
+    process.env["LAMPORTPAY_MODE"] = "test";
+    const payment = await quotedPayment("9");
     api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
-    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", PLACEHOLDER, "76"));
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", PLACEHOLDER, "9.5"));
     const view = await service.createPaymentTransfer(user, payment.id, {
       purposeCode: "FAMILY_MAINTENANCE",
       beneficiary: BENEFICIARY,
     });
-    expect(view.failureReason).toMatch(/asks for 76 USDC, not the quoted 75 USDC/);
+    expect(view.failureReason).toMatch(/asks for 9.5 USDC, not the quoted 9 USDC/);
   });
 
   it("refuses the placeholder outside the sandbox", async () => {
@@ -1525,21 +1648,37 @@ describe("LamportPay fee (non-custodial split)", () => {
     const quoted = await quotedPayment("75");
     expect(quoted.platformFee).toEqual({
       bps: 200,
-      amountMinor: "1500000",
-      amount: "1.5",
+      rule: "percentage",
+      amountMinor: "1530613",
+      amount: "1.530613",
       currency: "usdc",
+      settled: null,
     });
-    expect(quoted.totalToPay).toMatchObject({ amount: "76.5", currency: "usdc" });
+    expect(quoted.totalToPay).toMatchObject({ amount: "76.530613", currency: "usdc" });
     expect(JSON.stringify(quoted)).not.toContain(REVENUE);
     expect(paymentRow(quoted.id)).toMatchObject({
       platform_fee_bps: 200,
-      platform_fee_minor: 1_500_000,
+      platform_fee_minor: 1_530_613,
       platform_fee_wallet: REVENUE,
     });
 
     // A later change applies to new quotes only, never to this payment's transfer.
     await updateBusinessSettings({ conversionFeeBps: 100 }, ADMIN);
-    expect(paymentRow(quoted.id)["platform_fee_minor"]).toBe(1_500_000);
+    expect(paymentRow(quoted.id)["platform_fee_minor"]).toBe(1_530_613);
+  });
+
+  it("applies a configured minimum fee and records the rule with the payment (C05)", async () => {
+    await updateBusinessSettings({ feeMinMinor: 3_000_000 }, ADMIN);
+    const quoted = await quotedPayment("75");
+    // 2% of the total is 1.53, below the 3 minimum: the fee is 3, still one fee.
+    expect(quoted.platformFee).toMatchObject({ bps: 200, rule: "minimum", amount: "3" });
+    expect(quoted.totalToPay).toMatchObject({ amount: "78", currency: "usdc" });
+    expect(paymentRow(quoted.id)).toMatchObject({
+      platform_fee_minor: 3_000_000,
+      platform_fee_min_minor: 3_000_000,
+      platform_fee_max_minor: null,
+      platform_fee_rule: "minimum",
+    });
   });
 
   it("needs the amount plus the fee in the wallet before paying", async () => {
@@ -1548,7 +1687,7 @@ describe("LamportPay fee (non-custodial split)", () => {
     wallets.readWalletHoldings.mockResolvedValueOnce(holdings(payer, { usdc: 75_000_000n }));
     await expect(service.buildFundingTransaction(user, id, payer)).rejects.toMatchObject({
       code: "insufficient_balance",
-      message: expect.stringMatching(/needs 76\.5 USDC including the LamportPay fee/),
+      message: expect.stringMatching(/needs 76\.530613 USDC including the LamportPay fee/),
     });
   });
 
@@ -1557,7 +1696,7 @@ describe("LamportPay fee (non-custodial split)", () => {
     const payer = newWallet();
     mockBlockhash();
     const built = await service.buildFundingTransaction(user, id, payer);
-    expect(built).toMatchObject({ amount: "75", platformFee: "1.5", total: "76.5" });
+    expect(built).toMatchObject({ amount: "75", platformFee: "1.530613", total: "76.530613" });
     expect(wallets.solReserveLamports).toHaveBeenLastCalledWith(
       expect.objectContaining({ depositOwner: deposit, feeOwner: REVENUE }),
     );
@@ -1565,7 +1704,7 @@ describe("LamportPay fee (non-custodial split)", () => {
     const { Transaction } = await import("@solana/web3.js");
     const tx = Transaction.from(Buffer.from(built.transaction, "base64"));
     const transfers = tx.instructions.filter((i) => i.data[0] === 12 && i.data.length === 10);
-    expect(transfers.map((i) => i.data.readBigUInt64LE(1))).toEqual([75_000_000n, 1_500_000n]);
+    expect(transfers.map((i) => i.data.readBigUInt64LE(1))).toEqual([75_000_000n, 1_530_613n]);
     // Every transfer is signed by the user's own wallet; the server signs nothing.
     expect(tx.signatures.every((s) => s.signature === null)).toBe(true);
     expect(tx.feePayer?.toBase58()).toBe(payer);
@@ -1582,15 +1721,71 @@ describe("LamportPay fee (non-custodial split)", () => {
         from: payer,
         to: deposit,
         amount: 75_000_000n,
-        fee: { to: REVENUE, amount: 1_500_000n },
+        fee: { to: REVENUE, amount: 1_530_613n },
       }),
     });
     const signature = fakeSignature();
     const funded = await service.verifyFunding(user, id, signature);
     expect(funded).toMatchObject({ pending: false });
-    expect(paymentRow(id)["platform_fee_received_minor"]).toBe(1_500_000);
+    expect(paymentRow(id)["platform_fee_received_minor"]).toBe(1_530_613);
     const kinds = db.table("payment_events").map((e) => e["kind"]);
     expect(kinds).not.toContain("platform_fee_mismatch");
+  });
+
+  it("fixes the price at transfer creation and keeps an append-only fee ledger", async () => {
+    const { id, deposit } = await paymentAwaitingFunds("75");
+    const row = paymentRow(id);
+    expect(row["pricing_snapshot"]).toMatchObject({
+      lamportpay_fee: {
+        bps: 200,
+        amount_minor: "1530613",
+        currency: "usdc",
+        revenue_wallet_set: true,
+      },
+      deposit_minor: "75000000",
+      total_minor: "76530613",
+    });
+    // The snapshot never carries the revenue wallet address itself.
+    expect(JSON.stringify(row["pricing_snapshot"])).not.toContain(REVENUE);
+    const expected = db.table("payment_fee_ledger").filter((e) => e["payment_id"] === id);
+    expect(expected).toContainEqual(
+      expect.objectContaining({
+        category: "lamportpay_fee",
+        entry_type: "expected",
+        amount_minor: 1_530_613,
+        currency: "usdc",
+        bps: 200,
+      }),
+    );
+    // Stables' own fee, as Stables quoted it, in its own currency.
+    expect(expected).toContainEqual(
+      expect.objectContaining({ category: "partner_fee", component: "total_fee", currency: "usd" }),
+    );
+
+    const payer = newWallet();
+    mockBlockhash();
+    await service.buildFundingTransaction(user, id, payer);
+    const signature = fakeSignature();
+    rpcMock.mockResolvedValueOnce({
+      ok: true,
+      result: usdcTransferTx({
+        from: payer,
+        to: deposit,
+        amount: 75_000_000n,
+        fee: { to: REVENUE, amount: 1_530_613n },
+      }),
+    });
+    await service.verifyFunding(user, id, signature);
+    const received = db
+      .table("payment_fee_ledger")
+      .filter((e) => e["payment_id"] === id && e["entry_type"] === "received");
+    expect(received).toEqual([
+      expect.objectContaining({
+        category: "lamportpay_fee",
+        amount_minor: 1_530_613,
+        reference: signature,
+      }),
+    ]);
   });
 
   it("never blocks a deposit that reached Stables without the fee; flags it instead", async () => {
@@ -1606,7 +1801,7 @@ describe("LamportPay fee (non-custodial split)", () => {
     expect(funded).toMatchObject({ pending: false });
     expect(paymentRow(id)["platform_fee_received_minor"]).toBe(0);
     const mismatch = db.table("payment_events").find((e) => e["kind"] === "platform_fee_mismatch");
-    expect(mismatch?.["detail"]).toMatchObject({ expected_minor: "1500000", received_minor: "0" });
+    expect(mismatch?.["detail"]).toMatchObject({ expected_minor: "1530613", received_minor: "0" });
   });
 });
 
@@ -1631,5 +1826,359 @@ describe("payment coins turned off", () => {
       (c) => (c[1] as { source: { currency: string } }).source.currency,
     );
     expect(previews).toEqual(["usdc"]);
+  });
+});
+
+// ------------------------------------------------ live calculator (no wallet)
+
+describe("live estimate for the /pay calculator", () => {
+  it("prices with a Stables preview and adds the one LamportPay fee, creating nothing", async () => {
+    const { liveEstimate } = await import("@/lib/payments/live-estimate.server");
+    await updateBusinessSettings(
+      { conversionFeeBps: 200, revenueWallet: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU" },
+      "00000000-0000-4000-8000-000000000001",
+    );
+    api.createQuote.mockResolvedValueOnce(quote("73.5", "inr", "6100"));
+    const est = await liveEstimate({
+      amount: "75",
+      country: "in",
+      currency: "INR",
+      coin: "usdc",
+      withSol: false,
+    });
+    expect(api.createQuote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ preview: true }),
+    );
+    // The user sends 75: 2% (1.50) comes out, 73.50 goes to the payout partner.
+    expect(api.createQuote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ source: expect.objectContaining({ amount: "73.5" }) }),
+    );
+    expect(est).toMatchObject({
+      amount: "75",
+      converted: "73.5",
+      payout: {
+        status: "priced",
+        country: "IN",
+        currency: "inr",
+        receives: "6100",
+        partnerFees: [{ kind: "total_fee", amount: "0.75", currency: "usd" }],
+      },
+      lamportpayFee: { bps: 200, amount: "1.5", rule: "percentage" },
+      totalFromWallet: "75",
+      sol: null,
+    });
+    expect(db.table("payments")).toHaveLength(0);
+  });
+
+  it("applies the minimum to what the user sends, fee included (owner decision 2 Oct)", async () => {
+    const { liveEstimate } = await import("@/lib/payments/live-estimate.server");
+    await updateBusinessSettings(
+      { conversionFeeBps: 200, revenueWallet: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU" },
+      "00000000-0000-4000-8000-000000000001",
+    );
+    // Test limits are 50–100 USDC. Sending exactly 50: 1.00 fee, 49.00 converted, allowed.
+    api.createQuote.mockResolvedValueOnce(quote("49", "inr", "4070"));
+    const atMin = await liveEstimate({
+      amount: "50",
+      country: "in",
+      currency: "INR",
+      coin: "usdc",
+      withSol: false,
+    });
+    expect(atMin).toMatchObject({ converted: "49", payout: { status: "priced" } });
+
+    // Below the minimum (49.99 sent) is refused without asking Stables.
+    api.createQuote.mockClear();
+    const below = await liveEstimate({
+      amount: "49.99",
+      country: "in",
+      currency: "INR",
+      coin: "usdc",
+      withSol: false,
+    });
+    expect(below.payout.status).toBe("refused");
+    expect(api.createQuote).not.toHaveBeenCalled();
+
+    // A payment created from that 50 (49 converted) passes the limits too.
+    api.createQuote.mockResolvedValue(quote("49", "inr", "4070"));
+    await service.createPayment(user, {
+      amount: "49",
+      country: "in",
+      currency: "INR",
+      wallet: newWallet(),
+    });
+    expect(db.table("payments")).toHaveLength(1);
+  });
+
+  it("returns Stables' refusal instead of a number", async () => {
+    const { liveEstimate } = await import("@/lib/payments/live-estimate.server");
+    const est = await liveEstimate({
+      amount: "75",
+      country: "zz",
+      currency: "xyz",
+      coin: "usdc",
+      withSol: false,
+    });
+    expect(est.payout.status).toBe("refused");
+  });
+});
+
+describe("quote before verification (NEXT FLOW)", () => {
+  it("quotes a new user who has no payout-partner customer yet", async () => {
+    const payment = await createPayment("75");
+    api.createQuote.mockResolvedValueOnce(quote("75", "inr", "6232.5"));
+    const view = await service.quotePayment(user, payment.id);
+    expect(view.status).toBe("QUOTED");
+    expect(api.getCustomer).not.toHaveBeenCalled();
+  });
+
+  it("still refuses to create the transfer until the customer is verified", async () => {
+    const payment = await createPayment("75");
+    api.createQuote.mockResolvedValueOnce(quote("75", "inr", "6232.5"));
+    await service.quotePayment(user, payment.id);
+    await expect(
+      service.createPaymentTransfer(user, payment.id, {
+        purposeCode: "FAMILY_MAINTENANCE",
+        beneficiary: BENEFICIARY,
+      }),
+    ).rejects.toMatchObject({ status: expect.any(Number) });
+    expect(api.createTransfer).not.toHaveBeenCalled();
+  });
+});
+
+describe("payout details check", () => {
+  it("validates the bank details with Stables using the entered name for a new user", async () => {
+    const payment = await createPayment("75");
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    const result = await service.checkPayoutDetails(user, payment.id, {
+      beneficiary: BENEFICIARY,
+      holderName: "  Ada   Lovelace ",
+    });
+    expect(result).toEqual({ valid: true, holderName: "Ada Lovelace", holderSource: "entered" });
+    const [, body] = api.validatePaymentMethod.mock.calls[0]!;
+    expect(JSON.stringify(body)).toContain("Ada Lovelace");
+    const events = await ledger.listPaymentEvents(payment.id);
+    const checked = events.find((e) => e.kind === "payout_details_checked");
+    expect(JSON.stringify(checked?.detail)).not.toContain(BENEFICIARY.accountNumber);
+  });
+
+  it("uses the verified name for a returning customer, ignoring a typed one", async () => {
+    const payment = await quotedPayment();
+    await service.getKycStatus(user); // stores "approved" with Stables' name
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    const result = await service.checkPayoutDetails(user, payment.id, {
+      beneficiary: BENEFICIARY,
+      holderName: "Someone Else",
+    });
+    expect(result).toMatchObject({ holderName: "Asha Rao", holderSource: "verified_record" });
+  });
+
+  it("asks for a name when there is no verified record", async () => {
+    const payment = await createPayment("75");
+    await expect(
+      service.checkPayoutDetails(user, payment.id, { beneficiary: BENEFICIARY }),
+    ).rejects.toMatchObject({ status: 400, code: "name_required" });
+    expect(api.validatePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("reports Stables' field errors instead of accepting invalid details", async () => {
+    const payment = await createPayment("75");
+    api.validatePaymentMethod.mockResolvedValueOnce({
+      valid: false,
+      errors: [{ field: "ifsc_code", message: "Invalid IFSC" }],
+    } as never);
+    await expect(
+      service.checkPayoutDetails(user, payment.id, {
+        beneficiary: BENEFICIARY,
+        holderName: "Ada Lovelace",
+      }),
+    ).rejects.toMatchObject({ status: expect.any(Number) });
+  });
+});
+
+describe("TEST MODE Pay Now (devnet memo transaction)", () => {
+  const MEMO = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+
+  function memoTx(signer: string, memo: string, err: unknown = null) {
+    return {
+      ok: true as const,
+      result: {
+        blockTime: Math.floor(Date.now() / 1000),
+        meta: { err },
+        transaction: {
+          message: {
+            accountKeys: [{ pubkey: signer, signer: true }],
+            instructions: [{ programId: MEMO, program: "spl-memo", parsed: memo }],
+          },
+        },
+      },
+    };
+  }
+
+  async function awaitingTestPayment() {
+    const { id } = await paymentAwaitingFunds("75");
+    Object.assign(process.env, {
+      LAMPORTPAY_MODE: "test",
+      STABLES_API_KEY: "sti_test_fixture",
+      STABLES_API_URL: "https://api.sandbox.stables.money",
+    });
+    api.simulateTransferDeposit.mockResolvedValue({
+      transfer_id: "tr_1",
+      simulation_id: "sim_1",
+      scenario: "success",
+      deposit_status: "received",
+    });
+    const wallet = newWallet();
+    wallets.readWalletHoldings.mockResolvedValue(holdings(wallet));
+    return { id, wallet, payer: { ...user, wallets: [wallet] } };
+  }
+
+  // Lazy import: the module reads the mode at call time.
+  const confirm = async (
+    ...args: Parameters<typeof import("@/lib/payments/test-payment.server").confirmTestPayment>
+  ) => (await import("@/lib/payments/test-payment.server")).confirmTestPayment(...args);
+
+  it("detects the signed devnet transaction, then simulates the sandbox deposit once", async () => {
+    const { id, wallet, payer } = await awaitingTestPayment();
+    const sig = fakeSignature();
+    rpcMock.mockResolvedValue(memoTx(wallet, `LamportPay TEST payment ${id}`) as never);
+    const view = await confirm(payer, id, sig);
+    expect(rpcMock.mock.calls[0]![0]).toBe("devnet");
+    expect(view.testPayment).toMatchObject({ signature: sig, wallet });
+    expect(view.testPayment?.explorerUrl).toContain("cluster=devnet");
+    expect(api.simulateTransferDeposit).toHaveBeenCalledTimes(1);
+    // Nothing marks the payment complete here: Stables drives the rest.
+    expect(view.status).not.toBe("COMPLETED");
+
+    // Same signature again: answered, no second simulation.
+    await confirm(payer, id, sig);
+    expect(api.simulateTransferDeposit).toHaveBeenCalledTimes(1);
+    // A different transaction for an already-paid payment is refused.
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      status: 409,
+      code: "already_paid",
+    });
+  });
+
+  it("refuses a transaction for another payment, from another wallet, failed or unconfirmed", async () => {
+    const { id, wallet, payer } = await awaitingTestPayment();
+    rpcMock.mockResolvedValueOnce(memoTx(wallet, "LamportPay TEST payment other") as never);
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      code: "memo_mismatch",
+    });
+    rpcMock.mockResolvedValueOnce(memoTx(newWallet(), `LamportPay TEST payment ${id}`) as never);
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      code: "wrong_wallet",
+    });
+    rpcMock.mockResolvedValueOnce(
+      memoTx(wallet, `LamportPay TEST payment ${id}`, { InstructionError: [0, "x"] }) as never,
+    );
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      code: "transaction_failed",
+    });
+    rpcMock.mockResolvedValueOnce({ ok: true, result: null } as never);
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      code: "not_confirmed",
+    });
+    expect(api.simulateTransferDeposit).not.toHaveBeenCalled();
+  });
+
+  it("uses a valid Solana address for the Memo program (client and server agree)", async () => {
+    const { PublicKey } = await import("@solana/web3.js");
+    const { MEMO_PROGRAM_ID } = await import("@/lib/payments/test-payment.server");
+    expect(MEMO_PROGRAM_ID).toBe(MEMO);
+    expect(new PublicKey(MEMO_PROGRAM_ID).toBase58()).toBe(MEMO);
+  });
+
+  it("refuses when the approving wallet doesn't hold the devnet USDC the payment needs", async () => {
+    const { id, wallet, payer } = await awaitingTestPayment();
+    wallets.readWalletHoldings.mockResolvedValue(holdings(wallet, { usdc: 1_000_000n })); // 1 USDC
+    rpcMock.mockResolvedValueOnce(memoTx(wallet, `LamportPay TEST payment ${id}`) as never);
+    await expect(confirm(payer, id, fakeSignature())).rejects.toMatchObject({
+      status: 409,
+      code: "insufficient_funds",
+    });
+    expect(api.simulateTransferDeposit).not.toHaveBeenCalled();
+  });
+
+  it("is refused in LIVE MODE", async () => {
+    const { id } = await paymentAwaitingFunds("75");
+    await expect(confirm(user, id, fakeSignature())).rejects.toMatchObject({
+      code: "test_mode_only",
+    });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("live status sync (no webhook, no reconcile command)", () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const age = (id: string) => {
+    const row = db.table("payments").find((p) => p["id"] === id)!;
+    row["reconciled_at"] = minutesAgo(5);
+  };
+
+  it("moves the payment screen to COMPLETED as soon as Stables reports completed", async () => {
+    const { id } = await paymentAwaitingFunds();
+    age(id);
+    api.getTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75", "completed"));
+    const view = await service.getPaymentView(user, id);
+    expect(view.status).toBe("COMPLETED");
+    const moved = (await ledger.listPaymentEvents(id)).find((e) => e.to_status === "COMPLETED");
+    expect(moved?.source).toBe("reconcile");
+    expect(moved?.detail).toMatchObject({ trigger: "live_sync", transfer_status: "completed" });
+  });
+
+  it("mirrors IN_PROGRESS while Stables is still processing; never invents COMPLETED", async () => {
+    const { id } = await paymentAwaitingFunds();
+    age(id);
+    api.getTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75", "in_progress"));
+    expect((await service.getPaymentView(user, id)).status).toBe("IN_PROGRESS");
+  });
+
+  it("asks Stables at most once per interval, however often the screen polls", async () => {
+    const { id } = await paymentAwaitingFunds();
+    age(id);
+    api.getTransfer.mockClear();
+    await service.getPaymentView(user, id);
+    await service.getPaymentView(user, id);
+    await service.getPaymentView(user, id);
+    expect(api.getTransfer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the stored state when Stables cannot be reached", async () => {
+    const { id } = await paymentAwaitingFunds();
+    age(id);
+    const before = (await ledger.getPayment(id))!.status;
+    api.getTransfer.mockRejectedValueOnce(new StablesError("Bad gateway", 502));
+    const view = await service.getPaymentView(user, id);
+    expect(view.status).toBe(before);
+  });
+
+  it("does not move a finished payment backwards or call Stables for it", async () => {
+    const payment = await seedTransferPayment("COMPLETED");
+    api.getTransfer.mockClear();
+    api.getTransfer.mockResolvedValue(transfer("tr_x", newWallet(), "75", "in_progress"));
+    expect((await service.getPaymentView(user, payment.id)).status).toBe("COMPLETED");
+    expect(api.getTransfer).not.toHaveBeenCalled();
+  });
+
+  it("applies Stables' status right after a simulated sandbox deposit", async () => {
+    const { id } = await paymentAwaitingFunds();
+    Object.assign(process.env, {
+      LAMPORTPAY_MODE: "test",
+      STABLES_API_KEY: "sti_test_fixture",
+      STABLES_API_URL: "https://api.sandbox.stables.money",
+    });
+    api.simulateTransferDeposit.mockResolvedValue({
+      transfer_id: "tr_1",
+      simulation_id: "sim_1",
+      scenario: "completed",
+      deposit_status: "completed",
+    });
+    api.getTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75", "completed"));
+    await service.simulateSandboxDeposit(id, { id: "admin-1" });
+    expect((await ledger.getPayment(id))?.status).toBe("COMPLETED");
   });
 });

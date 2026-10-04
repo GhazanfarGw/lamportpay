@@ -3,6 +3,8 @@
  * never reach the browser. Read inside handlers so env changes apply per call.
  */
 
+import { currentMode, endpointAllowed } from "@/lib/app-mode.server";
+
 export const STABLES_SANDBOX_URL = "https://api.sandbox.stables.money";
 
 export type StablesEnvironment = "sandbox" | "production";
@@ -45,6 +47,18 @@ export function getStablesConfig(): StablesConfig {
       configured: false,
       reason: "A live key (sti_live_) is set with the sandbox STABLES_API_URL.",
     };
+  }
+
+  // TEST MODE only talks to the sandbox; LIVE MODE only to production, and
+  // never with a test key. A mismatch leaves Stables unconfigured (no calls).
+  const mode = currentMode().mode;
+  const verdict = endpointAllowed(mode, "stables", apiUrl);
+  if (!verdict.ok) return { configured: false, reason: verdict.reason };
+  if (mode === "live" && apiKey.startsWith("sti_test_")) {
+    return { configured: false, reason: "LIVE MODE cannot use a Stables test key." };
+  }
+  if (mode === "test" && apiKey.startsWith("sti_live_")) {
+    return { configured: false, reason: "TEST MODE cannot use a live Stables key." };
   }
 
   return { configured: true, apiKey, apiUrl, environment };

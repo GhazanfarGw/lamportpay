@@ -1,0 +1,3 @@
+Token logos (sol.svg, usdc.svg, usdt.svg) from @web3icons/core 4.0.57
+(https://github.com/0xa3k5/web3icons), licensed MIT per its package.json.
+The logos remain trademarks of their owners (Solana Foundation, Circle, Tether).

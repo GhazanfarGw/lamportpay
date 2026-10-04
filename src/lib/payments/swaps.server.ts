@@ -22,6 +22,7 @@ import {
   messageSha256,
   type JupiterOrder,
 } from "@/lib/jupiter/client.server";
+import { requireRealFundsMode } from "@/lib/app-mode.server";
 import { toMajor } from "@/lib/money";
 import { solReserveLamports, tokenAccountRentLamports } from "@/lib/solana-balances.server";
 import { rpc } from "@/lib/solana-rpc.server";
@@ -74,6 +75,8 @@ const units = (minor: bigint, asset: "sol" | PaymentCurrency) =>
   `${toMajor(minor, asset)} ${label(asset)}`;
 
 function requireLiveSwaps() {
+  // Jupiter has no devnet: every swap moves real funds, so never in TEST MODE.
+  requireRealFundsMode();
   const config = requireStables();
   if (config.environment !== "production") {
     throw new PaymentError(
@@ -136,12 +139,14 @@ export async function orderSwap(
 ): Promise<SwapOrderResult> {
   requireLiveSwaps();
   const payment = await ownedPayment(user, paymentId);
-  if (ledger.paymentState(payment) !== "KYC_APPROVED" || payment.quote_id) {
-    throw new PaymentError(
-      "A swap is possible only after identity verification and before the quote.",
-      409,
-      "not_kyc_approved",
-    );
+  // A swap is the user's own conversion inside their own wallet; it does not
+  // need identity verification (the payout does, at the transfer). It must
+  // happen before the firm quote, which in LIVE MODE needs the coin in hand.
+  const preQuote = ["PAYMENT_CREATED", "KYC_PENDING", "KYC_APPROVED"].includes(
+    ledger.paymentState(payment),
+  );
+  if (!preQuote || payment.quote_id) {
+    throw new PaymentError("A swap is possible only before the quote.", 409, "not_kyc_approved");
   }
   const coin = payment.source_currency;
   if (!isPaymentCurrency(coin)) throw new Error(`Payment ${payment.id} has coin ${coin}.`);

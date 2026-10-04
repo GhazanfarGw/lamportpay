@@ -18,6 +18,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 
 import { PACKET_DATA_SIZE, PublicKey, VersionedTransaction } from "@solana/web3.js";
 
+import { assertEndpointAllowed } from "@/lib/app-mode.server";
 import { PAYMENT_CURRENCY_MINTS, SOL_MINT } from "@/lib/tokens";
 
 const ORDER_URL = "https://api.jup.ag/swap/v2/order";
@@ -293,6 +294,11 @@ export async function getOrder(p: {
     url.searchParams.set("referralAccount", referral.account);
     url.searchParams.set("referralFee", String(referral.feeBps));
   }
+  // Jupiter is mainnet-only. TEST MODE allows only the read-only price quote (no
+  // taker, no transaction); an order for a wallet is blocked before any fetch.
+  assertEndpointAllowed(p.taker === undefined ? "jupiter_quote" : "jupiter_order", url.toString(), {
+    withWallet: p.taker !== undefined,
+  });
 
   let response: Response;
   try {
@@ -428,6 +434,8 @@ export async function executeOrder(p: {
     throw new JupiterError("requestId is required.", 400);
   }
   const key = requireApiKey();
+  // Relaying a signed swap moves real mainnet funds: never in TEST MODE.
+  assertEndpointAllowed("jupiter_execute", EXECUTE_URL);
 
   let response: Response;
   try {

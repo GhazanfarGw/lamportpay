@@ -18,6 +18,9 @@ import {
   messageSha256,
 } from "@/lib/jupiter/client.server";
 import { SOL_MINT, USDC_MINT, USDT_MINT } from "@/lib/tokens";
+import { LIVE_ENV } from "./support/app-mode";
+
+vi.mock("@/lib/app-mode-lock", () => ({ LIVE_MODE_CODE_UNLOCKED: true }));
 
 const BLOCKHASH = Keypair.generate().publicKey.toBase58();
 const taker = Keypair.generate();
@@ -122,6 +125,10 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("JUPITER_API_KEY", "test-key");
+  // Jupiter is mainnet-only: only a fully active LIVE MODE may call it (lock
+  // mocked open above + the complete live fixture). TEST MODE is covered in
+  // tests/app-mode.unit.test.ts.
+  for (const [k, v] of Object.entries(LIVE_ENV)) vi.stubEnv(k, v);
 });
 
 afterEach(() => {

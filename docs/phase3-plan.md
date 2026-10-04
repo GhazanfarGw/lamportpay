@@ -1,6 +1,19 @@
-# Phase 3 plan — Revenue engine + dApp app shell
+# Revenue work plan (master roadmap: Phase 2 fee items + Phase 3 revenue engine)
 
-**Status: IN PROGRESS (started 2026-09-29).** Phase 2 closed by the owner on 2026-09-29.
+**Status: IN PROGRESS.** Phase 2 is the current phase of the master roadmap (see docs/ROADMAP.md).
+
+> **Correction 2026-09-30 (owner):** LamportPay charges **one fee of 2%** (all LamportPay
+> revenue), not a 2% conversion fee plus a 2% swap fee. Stables' fees, Jupiter's own swap
+> fees and network fees are separate provider costs paid by the user and are not part of the
+> 2%. The swap-fee path below is dormant: `swapFeeBps` must be
+> 0 and is refused otherwise, and the admin UI shows a single "LamportPay fee". Where this
+> file still says "2% conversion and 2% swap", read it as history. Phases and trackers now
+> live in `docs/ROADMAP.md`.
+>
+> **Phase numbering (30 Sep):** per the master roadmap, configurable fees, the non-custodial fee
+> split, the fee ledger, the audit trail and the dApp shell are **Phase 2** scope; the pricing
+> snapshot, ledger categories, fee audit and admin pricing screen are **Phase 3**. This file's
+> "Phase 3" label predates that alignment.
 
 ## Owner decisions (2026-09-29)
 

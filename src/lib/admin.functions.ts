@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+
+import { stuckSignal } from "./payments/stuck";
 import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -49,17 +51,28 @@ export const getStablesPaymentDetailAdmin = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     await requireAdmin(context);
+    // Show Stables' current status, not only what webhooks delivered (throttled).
+    const { syncPaymentById } = await import("@/lib/payments/service.server");
+    await syncPaymentById(data.id);
 
-    const [paymentResult, eventsResult] = await Promise.all([
+    const [paymentResult, eventsResult, ledgerResult] = await Promise.all([
       supabase.from("payments").select("*").eq("id", data.id).maybeSingle(),
       supabase
         .from("payment_events")
         .select("created_at, kind, from_status, to_status, source, detail")
         .eq("payment_id", data.id)
         .order("id", { ascending: true }),
+      supabase
+        .from("payment_fee_ledger")
+        .select(
+          "category, entry_type, component, amount_minor, currency, bps, reference, created_at",
+        )
+        .eq("payment_id", data.id)
+        .order("id", { ascending: true }),
     ]);
     if (paymentResult.error) throw new Error(paymentResult.error.message);
     if (eventsResult.error) throw new Error(eventsResult.error.message);
+    if (ledgerResult.error) throw new Error(ledgerResult.error.message);
     const payment = paymentResult.data;
     if (!payment) throw new Error("Payment not found.");
     const events = eventsResult.data ?? [];
@@ -78,6 +91,11 @@ export const getStablesPaymentDetailAdmin = createServerFn({ method: "POST" })
         detail: e.detail === null ? null : JSON.stringify(e.detail),
       })),
       stablesEnvironment: config.configured ? config.environment : ("unconfigured" as const),
+      pricingSnapshot:
+        payment.pricing_snapshot === null
+          ? null
+          : JSON.stringify(payment.pricing_snapshot, null, 2),
+      feeLedger: ledgerResult.data ?? [],
     };
   });
 
@@ -127,6 +145,9 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
         travelRuleUnmatched: [] as AdminUnmatchedTravelRule[],
       };
     }
+    // Refresh open transfers from Stables before listing (throttled per payment).
+    const { syncOpenPayments } = await import("@/lib/payments/service.server");
+    await syncOpenPayments(10);
 
     const [recent, open, unmatched, rejectedDeposits] = await Promise.all([
       supabase
@@ -159,6 +180,24 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
     for (const result of [recent, open, unmatched, rejectedDeposits]) {
       if (result.error) throw new Error(result.error.message);
     }
+    // Monitoring: when each listed payment last changed status.
+    const listedIds = [...(recent.data ?? []), ...(open.data ?? [])].map(
+      (r) => (r as { id: string }).id,
+    );
+    const transitions = listedIds.length
+      ? await supabase
+          .from("payment_events")
+          .select("payment_id, created_at")
+          .in("payment_id", listedIds)
+          .not("to_status", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1000)
+      : { data: [], error: null };
+    if (transitions.error) throw new Error(transitions.error.message);
+    const lastChange = new Map<string, string>();
+    for (const e of transitions.data ?? []) {
+      if (!lastChange.has(e.payment_id)) lastChange.set(e.payment_id, e.created_at);
+    }
 
     const text = (value: unknown) => (typeof value === "string" ? value : null);
     const fundsMoved = new Set(
@@ -170,10 +209,16 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
         .map((e) => e.payment_id),
     );
     const withIssue = (rows: unknown[] | null) =>
-      ((rows ?? []) as AdminStablesPaymentRow[]).map((row) => ({
-        ...row,
-        deposit_issue: !row.funding_signature && fundsMoved.has(row.id),
-      }));
+      ((rows ?? []) as AdminStablesPaymentRow[]).map((row) => {
+        const statusChangedAt = lastChange.get(row.id) ?? null;
+        const stuck = stuckSignal({ ...row, status_changed_at: statusChangedAt });
+        return {
+          ...row,
+          deposit_issue: !row.funding_signature && fundsMoved.has(row.id),
+          status_changed_at: statusChangedAt,
+          stuck: stuck && { waitingOn: stuck.waitingOn, label: stuck.label },
+        };
+      });
     return {
       isAdmin: true,
       payments: withIssue(recent.data),
@@ -380,7 +425,10 @@ export const updateTransferStatus = createServerFn({ method: "POST" })
         action: "payment_status_changed",
       });
     }
-    if (data.adminNote !== undefined && (patch.admin_note ?? null) !== (previous.admin_note ?? null)) {
+    if (
+      data.adminNote !== undefined &&
+      (patch.admin_note ?? null) !== (previous.admin_note ?? null)
+    ) {
       entries.push({
         field: "admin_note",
         oldValue: previous.admin_note ?? null,
@@ -405,9 +453,7 @@ export const updateTransferStatus = createServerFn({ method: "POST" })
 
 export const getPaymentDetail = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z.object({ id: z.string().uuid() }).strict().parse(input),
-  )
+  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).strict().parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
@@ -740,6 +786,16 @@ export const getBusinessSettingsAdmin = createServerFn({ method: "GET" })
   });
 
 const PAYMENT_COIN = z.enum(["usdc", "usdt"]);
+function limitText(l: { min: string; max: string | null } | null): string {
+  return l ? `${l.min} – ${l.max ?? "no maximum"}` : "invalid";
+}
+
+const PAYMENT_LIMIT = z
+  .object({
+    minMinor: z.number().int().min(1).max(1_000_000_000_000_000),
+    maxMinor: z.number().int().min(1).max(1_000_000_000_000_000).nullable(),
+  })
+  .strict();
 
 export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -747,7 +803,9 @@ export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
     z
       .object({
         conversionFeeBps: z.number().int().min(0).max(1000).nullable().optional(),
-        swapFeeBps: z.number().int().min(0).max(255).nullable().optional(),
+        /** Minor units (6 decimals); 0 = no bound, null = back to .env. */
+        feeMinMinor: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
+        feeMaxMinor: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
         revenueWallet: z
           .string()
           .trim()
@@ -755,6 +813,14 @@ export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
           .nullable()
           .optional(),
         enabledCurrencies: z.array(PAYMENT_COIN).min(1).max(2).nullable().optional(),
+        /** C07: per coin, minor units (6 decimals); maxMinor null = no LamportPay maximum; null = back to .env. */
+        paymentLimits: z
+          .object({
+            usdc: PAYMENT_LIMIT.nullable().optional(),
+            usdt: PAYMENT_LIMIT.nullable().optional(),
+          })
+          .strict()
+          .optional(),
         note: z.string().trim().max(300).optional(),
       })
       .strict()
@@ -765,7 +831,29 @@ export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
     const { supabase, userId, claims } = context;
     const actor = { id: userId, email: (claims as { email?: string } | null)?.email ?? null };
     const { updateBusinessSettings, bpsLabel } = await import("@/lib/business-settings.server");
-    const { note, ...patch } = data;
+    const { note, paymentLimits, ...rest } = data;
+    const patch = {
+      ...rest,
+      ...(paymentLimits && {
+        paymentLimits: Object.fromEntries(
+          Object.entries(paymentLimits).map(([coin, l]) => [
+            coin,
+            l ? { min_minor: l.minMinor, max_minor: l.maxMinor } : null,
+          ]),
+        ),
+      }),
+    };
+    // Fee and revenue-wallet changes move money: a reason is mandatory.
+    if (
+      (patch.revenueWallet !== undefined ||
+        patch.conversionFeeBps !== undefined ||
+        patch.feeMinMinor !== undefined ||
+        patch.feeMaxMinor !== undefined ||
+        paymentLimits !== undefined) &&
+      !note?.trim()
+    ) {
+      throw new Error("Give a reason for changing the fee, the limits or the revenue wallet.");
+    }
 
     let result;
     try {
@@ -776,9 +864,12 @@ export const updateBusinessSettingsAdmin = createServerFn({ method: "POST" })
     const { before, after } = result;
     const show = {
       conversionFeeBps: (s: typeof before) => bpsLabel(s.conversionFeeBps),
-      swapFeeBps: (s: typeof before) => bpsLabel(s.swapFeeBps),
+      feeMin: (s: typeof before) => s.feeMin ?? "none",
+      feeMax: (s: typeof before) => s.feeMax ?? "none",
       revenueWallet: (s: typeof before) => s.revenueWallet ?? "none",
       enabledCurrencies: (s: typeof before) => s.enabledCurrencies.join(","),
+      limitsUsdc: (s: typeof before) => limitText(s.paymentLimits.usdc),
+      limitsUsdt: (s: typeof before) => limitText(s.paymentLimits.usdt),
     };
     const entries = (Object.keys(show) as (keyof typeof show)[])
       .filter((field) => show[field](before) !== show[field](after))

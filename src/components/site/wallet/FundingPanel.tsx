@@ -5,6 +5,8 @@ import { Transaction } from "@solana/web3.js";
 import { Loader2, Send, TriangleAlert } from "lucide-react";
 
 import { PaymentApiError, paymentApi } from "@/lib/payments/api-client";
+import { walletActionErrorMessage } from "@/lib/wallet-sign-in";
+import { LiveFundsWarning } from "@/components/app/ModeBadge";
 import { WalletStatusCard } from "./SolanaWallet";
 
 export type FundingPanelProps = {
@@ -115,7 +117,7 @@ export function FundingPanel({
       await confirmFunding(paymentId, sig, publicKey.toBase58());
       onFunded();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sending failed.");
+      setError(walletActionErrorMessage(e, "Sending failed."));
     } finally {
       setBusy(null);
     }
@@ -134,6 +136,7 @@ export function FundingPanel({
   return (
     <div className="space-y-4">
       <WalletStatusCard />
+      <LiveFundsWarning />
 
       {!confirmOpen ? (
         <button
@@ -197,6 +200,12 @@ export function FundingPanel({
         <div className="text-xs text-muted-foreground break-all">
           Signature: <span className="font-mono">{signature}</span>
         </div>
+      )}
+      {busy === "send" && (
+        <p className="text-xs text-muted-foreground" role="status">
+          Your payment transaction is ready for approval in your wallet. Nothing moves until you
+          approve.
+        </p>
       )}
       {error && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">

@@ -61,14 +61,14 @@ describe("resolveBusinessSettings", () => {
     expect(s.sources.conversionFeeBps).toBe("env");
   });
 
-  it("reads USDC-only and 2% fees from .env", () => {
+  it("reads USDC-only and the one 2% LamportPay fee from .env", () => {
     process.env["LAMPORTPAY_FEE_BPS"] = "200";
-    process.env["LAMPORTPAY_SWAP_FEE_BPS"] = "200";
+    process.env["LAMPORTPAY_SWAP_FEE_BPS"] = "0";
     process.env["LAMPORTPAY_REVENUE_WALLET"] = WALLET;
     process.env["PAYMENT_ENABLED_CURRENCIES"] = "usdc";
     expect(resolveBusinessSettings(null)).toMatchObject({
       conversionFeeBps: 200,
-      swapFeeBps: 200,
+      swapFeeBps: 0,
       revenueWallet: WALLET,
       enabledCurrencies: ["usdc"],
     });
@@ -90,6 +90,11 @@ describe("resolveBusinessSettings", () => {
       /no revenue wallet/,
     );
     expect(() => resolveBusinessSettings(row({ swap_fee_bps: 30 }))).toThrow(/between 50 and 255/);
+    // One total fee: a separate swap fee is never allowed (2% + 2% would be 4%).
+    expect(() => resolveBusinessSettings(row({ swap_fee_bps: 200 }))).toThrow(/one total fee/);
+    process.env["LAMPORTPAY_SWAP_FEE_BPS"] = "200";
+    expect(() => resolveBusinessSettings(null)).toThrow(/one total fee/);
+    delete process.env["LAMPORTPAY_SWAP_FEE_BPS"];
     expect(() => resolveBusinessSettings(row({ enabled_currencies: ["dai"] }))).toThrow(/unknown/);
     expect(() => resolveBusinessSettings(row({ enabled_currencies: [] }))).toThrow(/at least one/);
     expect(() => resolveBusinessSettings(row({ revenue_wallet: "0xabc" }))).toThrow(
@@ -114,11 +119,10 @@ describe("updateBusinessSettings", () => {
   });
 
   it("changes only what the patch names, and null returns to .env", async () => {
-    process.env["LAMPORTPAY_SWAP_FEE_BPS"] = "100";
     await updateBusinessSettings({ conversionFeeBps: 200, revenueWallet: WALLET }, ADMIN);
     await updateBusinessSettings({ revenueWallet: OTHER }, ADMIN);
     let s = await getBusinessSettings();
-    expect(s).toMatchObject({ conversionFeeBps: 200, revenueWallet: OTHER, swapFeeBps: 100 });
+    expect(s).toMatchObject({ conversionFeeBps: 200, revenueWallet: OTHER, swapFeeBps: 0 });
 
     await updateBusinessSettings({ conversionFeeBps: null, revenueWallet: null }, ADMIN);
     s = await getBusinessSettings();

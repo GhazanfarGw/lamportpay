@@ -25,16 +25,21 @@ type ErrorBody = { error?: string; code?: string; reason?: string; fields?: Fiel
 
 export async function paymentApi<T>(
   path: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {},
+  init: {
+    method?: "GET" | "POST";
+    body?: unknown;
+    /** Public endpoints (the /pay calculator): call without a token when signed out. */
+    allowAnonymous?: boolean;
+  } = {},
 ): Promise<{ status: number; data: T }> {
   const { data: session } = await supabase.auth.getSession();
   const token = session.session?.access_token;
-  if (!token) throw new PaymentApiError("Sign in to continue.", 401);
+  if (!token && !init.allowAnonymous) throw new PaymentApiError("Sign in to continue.", 401);
 
   const res = await fetch(path, {
     method: init.method ?? "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(token && { Authorization: `Bearer ${token}` }),
       Accept: "application/json",
       ...(init.body !== undefined && { "Content-Type": "application/json" }),
     },

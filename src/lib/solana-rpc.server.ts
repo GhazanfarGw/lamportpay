@@ -1,7 +1,6 @@
-import {
-  DEFAULT_RPC_URLS,
-  type SolanaCluster,
-} from "./solana-rpc";
+import { MODE_PROFILES } from "./app-mode";
+import { currentMode, endpointAllowed } from "./app-mode.server";
+import { DEFAULT_RPC_URLS, type SolanaCluster } from "./solana-rpc";
 
 /** Resolve the RPC endpoint for a cluster; a custom SOLANA_RPC_URL wins for mainnet. */
 export function resolveRpcUrl(cluster: SolanaCluster): { url: string; custom: boolean } {
@@ -14,12 +13,31 @@ export function resolveRpcUrl(cluster: SolanaCluster): { url: string; custom: bo
   return { url: DEFAULT_RPC_URLS[cluster], custom: false };
 }
 
+/** The Solana cluster of the server's mode (TEST: devnet, LIVE: mainnet-beta). */
+export function activeCluster(): SolanaCluster {
+  return MODE_PROFILES[currentMode().mode].solanaCluster;
+}
+
 export async function rpc<T>(
   cluster: SolanaCluster,
   method: string,
   params: unknown[],
 ): Promise<{ ok: true; result: T } | { ok: false; error: string; status: number }> {
   const { url, custom } = resolveRpcUrl(cluster);
+  // TEST MODE never reaches mainnet; LIVE MODE never reaches a test cluster.
+  const mode = currentMode().mode;
+  if (cluster !== MODE_PROFILES[mode].solanaCluster) {
+    const reason = `${mode === "test" ? "TEST" : "LIVE"} MODE: the ${cluster} cluster is blocked.`;
+    console.error("[mode] RPC refused:", reason);
+    return { ok: false, error: reason, status: 403 };
+  }
+  const primary = endpointAllowed(mode, "solana_rpc", url);
+  const fallback = endpointAllowed(mode, "solana_rpc", DEFAULT_RPC_URLS[cluster]);
+  if (!primary.ok || !fallback.ok) {
+    const reason = !primary.ok ? primary.reason : (fallback as { reason: string }).reason;
+    console.error("[mode] RPC refused:", cluster, reason);
+    return { ok: false, error: reason, status: 403 };
+  }
   const attempt = await rpcAt<T>(url, cluster, method, params);
   // A misconfigured or unreachable custom endpoint should not break the cluster
   // check — retry once on the public endpoint.

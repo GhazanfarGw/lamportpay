@@ -18,7 +18,7 @@ export function AdminSignOutButton() {
       await queryClient.cancelQueries();
       queryClient.clear();
       await supabase.auth.signOut();
-      navigate({ to: "/auth", search: { next: "/admin" }, replace: true });
+      navigate({ to: "/admin/login", search: { next: "/admin" }, replace: true });
     } catch (error) {
       setBusy(false);
       toast.error(error instanceof Error ? error.message : "Could not sign out.");

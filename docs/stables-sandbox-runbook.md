@@ -342,3 +342,155 @@ saved. Webhooks were never refused by LamportPay.
 
 Answered on 2026-09-27: after a simulated deposit the sandbox **does** run the transfer to
 `completed` (about 10 seconds).
+
+## Stables fees and rate (sandbox check, 30 Sep 2026)
+
+Checked with `node scripts/stables-fee-probe.mjs` (sandbox only; preview quotes, nothing created):
+
+| Sent | To | Stables fees | Stables payout | `exchange_rate` |
+|---|---|---|---|---|
+| 100 USDC | INR | 0.25 platform + 5.00 payment method = 5.25 USD | 8,709.43 INR | 87.0943 |
+| 98 USDC | INR | 0.245 + 5.00 = 5.245 USD | 8,525.59 INR | 86.9958 |
+| 1,000 USDC | INR | 2.50 + 5.00 = 7.50 USD | 91,230.71 INR | 91.2307 |
+| 100 USDC | USD | 0.25 + 5.00 = 5.25 USD | 94.75 USD | 0.9475 |
+| 100 USDC | GBP | 0.25 + 1.00 = 1.25 USD | 74.33 GBP | 0.7433 |
+
+What this shows:
+- Stables' **platform fee is 0.25%** of the amount it converts; **payment-method fee is fixed per
+  corridor** (INR 5, USD 5, GBP 1 USD; AUD 0 in earlier quotes); fx and integrator fees 0.
+- Stables' fees are **already taken out of the payout**: USD 100 → 94.75 = 100 − 5.25, and INR
+  gives the same underlying rate at every size ((100 − 5.25) × 91.92 ≈ 8,709; (1,000 − 7.5) × 91.92 ≈ 91,231).
+- `exchange_rate` = payout ÷ amount sent, i.e. an **effective rate after Stables' fees** (it
+  rises with the amount because the fixed fee weighs less). The Stables dashboard's "1 USDC =
+  87.0943 INR · indicative" is this same number. `/pay` labels it "Effective rate, after partner fees".
+- LamportPay's 2% is separate: on 100 USDC sent, 2.00 goes to LamportPay and 98 to Stables, so
+  the payout is Stables' quote for 98 (8,525.59 INR in this check), not for 100.
+- Sandbox prices are "not reflective of live pricing" (Stables' own banner). Production fees and
+  rates must be re-checked in the real-money test.
+
+## Sandbox transfer status and webhooks (observed 27 Sep – 3 Oct 2026)
+
+What Stables itself reports, read with `node scripts/stables-transfer-status.mjs <transfer_id>`
+(sandbox only, read-only, prints status and timestamps, never the key):
+
+| Payment | Corridor | Amount sent to Stables | Deposit simulated | Stables status | Stables `updated_at` |
+|---|---|---|---|---|---|
+| 8f05eb6e (and b6601115, 93e94178, 12cf1f2e) | USDC → AUD | 105–150 USDC | 27 Sep | **completed** | 26 s after creation |
+| 4a46aa71, c25131bb | USDC → GBP | 100 USDC | 26–27 Sep | **completed** | within a minute |
+| bf3c85c2 | USDC → NGN | 9.80 USDC | 2 Oct 02:24 UTC (admin) | **in_progress** | 2 Oct 02:24 (no change since) |
+| b81a858e | USDC → BRL | 49 USDC | 2 Oct (admin) | **in_progress** | 2 Oct 02:54 (no change since) |
+| fe62b23e | USDC → NGN | 9.80 USDC | 2 Oct 23:02 UTC (TEST Pay Now) | **in_progress** | 2 Oct 23:02 (no change since) |
+| c7310839 (new user) | USDC → NGN | 9.80 USDC | 3 Oct 00:01 UTC (TEST Pay Now) | **in_progress** | 3 Oct 00:01 |
+| 1ac88bef (new user) | USDC → GBP | — | — | transfer creation **500** ("Something went wrong while creating the transfer", correlation id `fce3764e-42e7-4ad5-8db9-d66ccd9be722`) | — |
+
+### Controlled experiment, 3 Oct 2026 00:19–00:24 UTC (Stables sandbox only, LamportPay bypassed)
+
+`node --use-env-proxy scripts/stables-sandbox-lifecycle-probe.mjs <customer_id> CUR:AMOUNT …` creates
+a quote and a transfer for one already-verified sandbox customer (`c97c3e6e…`, approved), calls
+Stables' `POST /transfers/{id}/sandbox/simulate-deposit` (no body; Stables answers 202
+`deposit_status: completed`), then polls `GET /transfers/{id}`. Same request shape and purpose code
+(`TRANSFER_TO_OWN_ACCOUNT`) for every case; only corridor and amount change.
+
+| Case (amount to Stables) | Transfer creation | Statuses Stables reported |
+|---|---|---|
+| GBP 100 | 201 (c1ad2e55…) | `created` → **`completed`** within 1 s |
+| NGN 9.8 | 201 (0773a58e…) | `created` → `awaiting_funds_collection` → **`in_progress`** (no change after minutes) |
+| NGN 105 | 201 (7e60376f…) | `created` → **`in_progress`** (no change) |
+| NGN 500 | 201 (1cce5c7a…) | `created` → `awaiting_funds_collection` → **`in_progress`** |
+| MXN 100 | 201 (89e37b44…) | **`in_progress`** (no change) |
+| KES 100 | 201 (73d35785…) | **`in_progress`** (no change) |
+| GBP 19.6, GBP 50 | **500** "Something went wrong while creating the transfer" (correlation ids `115860de-bd20-4e9b-9890-0c6d788a8e09`, `c8dd3e1b-382b-4802-a1ca-2e514da1ae76`) | — |
+| AUD 105 | quote **422** "No route is currently available for this transfer" | — (AUD completed on 27 Sep) |
+
+A sanitized side-by-side of a completed (AUD, 27 Sep) and a stuck (NGN, 3 Oct) transfer
+(`scripts/stables-transfer-compare.mjs`) shows the same structure: `type: offramp`, `origin: api`,
+`funding_source: fund_transfer`, same fee fields; only currency, amount, bank fields and status differ.
+
+Follow-up the same night (00:40–00:55 UTC):
+- **GBP transfer creation depends on the amount sent to Stables.** Same customer, same body, only
+  the amount changed: 60, 80, 100, 120, 140 and 200 USDC → created (and `completed` after the
+  simulated deposit); 50, 100.5, 100.94, 101, 105, 110, 130 and 150 → **500** "Something went
+  wrong while creating the transfer" (repeatable). It looks like the sandbox only accepts GBP amounts
+  that are multiples of 20. LamportPay's 2% comes out of what the user sends, so a 103 USDC payment
+  sends 100.94 to Stables and hits the 500.
+- **End to end through LamportPay → COMPLETED (3 Oct 00:52 UTC):** payment `771ad2e1`, verified new
+  user (wallet BUGA…m4dM), the user sends 102.040817 USDC (exactly 100.00 to Stables), GBP. Payout
+  details checked; transfer `043ae1d9…` created; the owner approved the devnet memo transaction;
+  `test_payment_detected` → `sandbox_deposit_simulated`; Stables reported `completed`;
+  `npm run reconcile` moved the payment `CREATED → COMPLETED` (source `reconcile`); `/pay` shows
+  "Completed — paid into your account" with devnet explorer links.
+- **Webhooks:** the Stables dashboard (Settings → Webhooks → Logs) lists only `transfer.created`
+  messages for these transfers, including the ones that reached `completed`. The sandbox did **not
+  emit** `transfer.updated.status_transitioned` at all, so no webhook could have moved them. The one
+  registered endpoint still points at an old cloudflared quick tunnel (error rate ~90%), so on DEV
+  even `transfer.created` is not delivered. Reconciliation was therefore required in the sandbox; since 3 Oct the running app does it by
+  itself (live status sync, below), so `npm run reconcile` is no longer needed for a payment to progress. Production behaviour: ask Stables (E1).
+
+**Verdict:** `IN_PROGRESS → COMPLETED` is decided by Stables' sandbox per corridor, not by
+LamportPay: after the simulated deposit the sandbox completes GBP (≥ 100) and previously AUD, and
+leaves NGN, MXN and KES (and BRL) in `in_progress`. LamportPay mirrors exactly what
+`GET /transfers/{id}` returns. GBP transfers below ~100 fail inside Stables with a 500.
+
+What Stables needs to do / answer:
+1. Make sandbox NGN / MXN / KES / BRL transfers progress to `completed` (or `failed`) after
+   `simulate-deposit`, or document the sandbox control that does.
+2. Fix the GBP `POST /transfer` 500 for amounts that are not multiples of 20 USDC (or return a 4xx
+   with the real reason).
+3. Say whether AUD was removed from the sandbox on purpose.
+
+Conclusions (facts, not assumptions):
+- LamportPay's status follows Stables: our `IN_PROGRESS` is Stables' `in_progress`. Nothing in
+  LamportPay holds these payments back; `npm run reconcile` re-reads them and finds no change.
+- In the sandbox, NGN and BRL transfers have not left `in_progress` for 20+ hours after the
+  simulated deposit, while AUD and GBP transfers reached `completed` within a minute. Whether the
+  sandbox completes NGN/BRL at all, or only some corridors/amounts, is **OPEN — ask Stables**.
+- `actual_payout` is absent in the sandbox even after `completed` (see section 5).
+- Small amounts: the sandbox refuses to quote IN, US and PH at 10 USDC ("cannot be quoted for this
+  route") and AUD at 20 USDC ("No route is currently available"); GB, NG and MX quote at 10.
+
+Webhooks:
+- Localhost cannot receive webhooks (Stables needs a public HTTPS URL). Use `npm run tunnel` and
+  register the tunnel URL on the Stables dashboard endpoint (section 0), or run `npm run reconcile`.
+- Earlier tunnel tests (26–27 Sep, section 5) received `transfer.created` from the sandbox but
+  no `transfer.updated.status_transitioned`; API-managed subscriptions delivered nothing. (Eight
+  `transfer.updated.status_transitioned` deliveries are stored for 26 Sep 18:51, 2–3 s apart; their
+  origin — Stables or our own `npm run webhook:send` test tool — cannot be told from the database,
+  so they are not counted as evidence of sandbox delivery.) No tunnel was running for the 2–3 Oct payments, so webhook delivery
+  was not re-tested for them.
+  Until Stables confirms the sandbox behaviour (E1 in `docs/ROADMAP.md`), reconciliation is what
+  moves payments past `CREATED` on DEV. Production must not rely on the daily cron alone.
+
+Questions for Stables (add to the list above):
+1. Does the sandbox progress NGN / BRL transfers to `completed` after `simulate-deposit`? If so,
+   after how long, and is there a sandbox control to force `completed` or `failed`?
+2. Does the sandbox send `transfer.updated.status_transitioned` for every transition, or only some?
+3. Is `actual_payout` populated in production on `completed`?
+4. Why does `POST /api/v1/transfer` answer 500 for GBP amounts that are not multiples of 20 USDC
+   (correlation ids `fce3764e-42e7-4ad5-8db9-d66ccd9be722`, `5efdad17-ffb4-46e1-bf59-73964a72d4a6`,
+   `9c932936-5923-4a6b-a261-f52629d5778c`, 3 Oct 2026)?
+5. Does the sandbox ever emit `transfer.updated.status_transitioned`? Its message log shows only
+   `transfer.created`, even for transfers that reached `completed`.
+
+## Live status sync (3 Oct 2026) — no reconcile command needed
+
+Root cause of payments "stuck" until `npm run reconcile`: the app only changed a payment's status
+from a webhook or from the reconciliation job. The sandbox sends no status webhooks (and a local app
+cannot receive any), and the job runs daily (Vercel cron) or by hand. The payment screen polled our
+database every 5 s, but nothing refreshed the database from Stables.
+
+Fix: `syncPaymentWithStables` (src/lib/payments/service.server.ts). Whenever a payment with an open
+transfer is viewed — the user's `/pay` screen (polling every 5 s, also in a background tab), the
+admin payment list (polling every 15 s) and the admin payment detail (every 5 s) — the server reads
+`GET /transfers/{id}` from Stables, at most once per 8 s per payment, and applies the status with
+the same forward-only rules as reconciliation (event source `reconcile`, `trigger: live_sync`).
+A simulated sandbox deposit (TEST Pay Now or Admin → Simulate deposit) is followed by an immediate
+sync. Stables' status is the only input: `in_progress` stays `IN_PROGRESS`; `completed` becomes
+`COMPLETED` within one poll. A Stables error keeps the stored state.
+
+GHS check (3 Oct, payment 4734c7e2, transfer edacbe54…, 102.9 USDC to Stables): Stables itself
+reports `in_progress` since 01:31 UTC, so GHS joins NGN/MXN/KES/BRL as a sandbox corridor that does
+not complete. LamportPay shows "Processing" for it, correctly.
+
+## Full corridor matrix (3 Oct 2026)
+
+See `docs/testing/stables-sandbox-matrix-2026-10-03.md`. Sandbox completes GBP (multiples of 20 USDC only), INR, PHP and USD; ARS, BRL, COP, GHS, KES, MXN, NGN, RWF, TZS, UGX, XAF, XOF, ZAR and ZMW stay `in_progress`; AUD has no route; INR/USD/PHP refuse 10 USDC quotes.

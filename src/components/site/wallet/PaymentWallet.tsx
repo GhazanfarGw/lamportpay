@@ -4,7 +4,9 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { VersionedTransaction } from "@solana/web3.js";
 import { ArrowRightLeft, Loader2, TriangleAlert } from "lucide-react";
 
-import { PaymentApiError, paymentApi } from "@/lib/payments/api-client";
+import { paymentApi } from "@/lib/payments/api-client";
+import { walletActionErrorMessage } from "@/lib/wallet-sign-in";
+import { LiveFundsWarning } from "@/components/app/ModeBadge";
 import type { PaymentView, SwapView } from "@/lib/payments/view";
 import { WalletStatusCard, shortAddress } from "./SolanaWallet";
 
@@ -112,11 +114,7 @@ export function PaymentSwapPanel({
       }
       onChanged(data.payment);
     } catch (e) {
-      setError(
-        e instanceof PaymentApiError || e instanceof Error
-          ? e.message
-          : "The swap was not completed.",
-      );
+      setError(walletActionErrorMessage(e, "The swap was not completed."));
     } finally {
       setBusy(null);
     }
@@ -127,6 +125,7 @@ export function PaymentSwapPanel({
   return (
     <div className="space-y-4">
       <WalletStatusCard />
+      <LiveFundsWarning />
       {wrongWallet && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
           This swap is for {shortAddress(wallet)}. Connect that wallet to sign it.
@@ -190,10 +189,15 @@ export function PaymentSwapPanel({
         </div>
       )}
 
+      {busy === "sign" && (
+        <p className="text-xs text-muted-foreground" role="status">
+          Your wallet is requesting approval for the swap. Nothing moves until you approve.
+        </p>
+      )}
       {done && (
         <div className="rounded-xl border border-border bg-secondary px-4 py-3 text-sm">
           {done.status === "landed"
-            ? `Swap confirmed: ${done.actualOut} ${done.outputAsset.toUpperCase()} arrived in your wallet.`
+            ? `Swap completed: ${done.actualOut} ${done.outputAsset.toUpperCase()} arrived in your wallet. Preparing your payment.`
             : `Swap ${done.status}: ${done.failureReason ?? "nothing was swapped."}`}
         </div>
       )}

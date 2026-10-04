@@ -9,8 +9,11 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude tests/payments.test.ts --exclude tests/integration-status.test.ts --exclude tests/solana-rpc.test.ts --exclude tests/jupiter-quote.test.ts --exclude tests/jupiter-order-execute.test.ts",
     "test:watch": "vitest",
     "lint": "eslint .",
+    "lint:ci": "eslint . --rule \"prettier/prettier: off\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write .",
     "tunnel": "cloudflared tunnel --url http://localhost:8080 --http-host-header localhost:8080",
     "webhook:send": "node scripts/stables-webhook.mjs",
@@ -97,5 +100,8 @@
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.16",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

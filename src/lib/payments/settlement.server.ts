@@ -21,8 +21,9 @@ import { StablesError } from "@/lib/stables/client.server";
 import type { StablesConfig } from "@/lib/stables/config.server";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 import { PaymentError } from "./errors";
-import { conversionFeeMinor } from "./fees.server";
-import { getPaymentLimits, limitsMessage, outsideLimits } from "./limits.server";
+import { feeModelOf } from "@/lib/business-settings.server";
+import { platformFee as computePlatformFee, type FeeRule } from "./fee-math";
+import { getPaymentLimits, limitsFromMajor, limitsMessage, outsideLimits } from "./limits.server";
 import {
   classifyPreview,
   decideSettlement,
@@ -43,6 +44,16 @@ export type PricedCandidates = {
   failures: Partial<Record<PaymentCurrency, PreviewFailure>>;
 };
 
+/** LamportPay's fee for one payment, with the model that produced it (audit). */
+export type PlatformFeeQuote = {
+  bps: number;
+  minor: bigint;
+  wallet: string | null;
+  minMinor: bigint | null;
+  maxMinor: bigint | null;
+  rule: FeeRule;
+};
+
 export type SettlementPlan = {
   decision: SettlementDecision;
   failures: Partial<Record<PaymentCurrency, PreviewFailure>>;
@@ -51,7 +62,7 @@ export type SettlementPlan = {
   /** SOL to keep for fees and rent; null when it could not be read. */
   reserveLamports: bigint | null;
   /** LamportPay's fee on top of the amount, at the current settings. */
-  platformFee: { bps: number; minor: bigint; wallet: string | null };
+  platformFee: PlatformFeeQuote;
   /** Coins turned on in business settings, in order. */
   enabledCurrencies: PaymentCurrency[];
   wallet: string | null;
@@ -80,6 +91,13 @@ export async function priceCandidates(
     currency: string;
     /** Coins turned on; every payment coin when omitted. */
     coins?: readonly PaymentCurrency[];
+    /** Effective limits per coin (business settings); .env when omitted. */
+    limits?: Partial<Record<PaymentCurrency, { min: string; max: string | null } | null>>;
+    /**
+     * Amount the limits apply to: what the user sends (converted amount +
+     * LamportPay fee, owner decision 2 Oct 2026). Defaults to `amountMinor`.
+     */
+    limitAmountMinor?: bigint;
   },
 ): Promise<PricedCandidates> {
   const failures: PricedCandidates["failures"] = {};
@@ -87,7 +105,9 @@ export async function priceCandidates(
     (input.coins ?? PAYMENT_CURRENCIES).map(async (coin): Promise<Candidate> => {
       let limits;
       try {
-        limits = getPaymentLimits(coin);
+        const configured = input.limits?.[coin];
+        if (configured === null) throw new Error(`${coin} limits are misconfigured.`);
+        limits = configured ? limitsFromMajor(configured, coin) : getPaymentLimits(coin);
       } catch (e) {
         console.error("[payments] invalid payment limits:", e instanceof Error ? e.message : e);
         throw new PaymentError(
@@ -96,7 +116,7 @@ export async function priceCandidates(
           "limits_misconfigured",
         );
       }
-      if (outsideLimits(input.amountMinor, limits)) {
+      if (outsideLimits(input.limitAmountMinor ?? input.amountMinor, limits)) {
         return {
           coin,
           verdict: "out_of_limits",
@@ -196,9 +216,17 @@ export async function planSettlement(
       "currency_disabled",
     );
   }
-  const feeMinor = conversionFeeMinor(input.amountMinor, BigInt(settings.conversionFeeBps));
+  const model = feeModelOf(settings);
+  const fee = computePlatformFee(input.amountMinor, model);
+  const feeMinor = fee.minor;
   const [{ candidates, failures }, holdings] = await Promise.all([
-    priceCandidates(config, { ...input, coins: enabled }),
+    priceCandidates(config, {
+      ...input,
+      coins: enabled,
+      limits: settings.paymentLimits,
+      // Limits apply to what the user sends: converted amount + our fee.
+      limitAmountMinor: input.amountMinor + feeMinor,
+    }),
     input.wallet ? readWalletHoldings(input.wallet) : Promise.resolve(null),
   ]);
   const reserveLamports =
@@ -221,6 +249,9 @@ export async function planSettlement(
       bps: settings.conversionFeeBps,
       minor: feeMinor,
       wallet: feeMinor > 0n ? settings.revenueWallet : null,
+      minMinor: model.minMinor,
+      maxMinor: model.maxMinor,
+      rule: fee.rule,
     },
     enabledCurrencies: enabled,
     wallet: input.wallet,

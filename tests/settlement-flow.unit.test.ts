@@ -8,6 +8,11 @@ import { randomUUID } from "node:crypto";
 import { Keypair, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LIVE_ENV, MODE_ENV_KEYS } from "./support/app-mode";
+
+// Real-funds logic is tested as LIVE MODE would run it: lock mocked open, full
+// live config in beforeEach. The app itself keeps the lock closed.
+vi.mock("@/lib/app-mode-lock", () => ({ LIVE_MODE_CODE_UNLOCKED: true }));
 vi.mock("@/integrations/supabase/client.server", async () => {
   const { createFakeSupabase } = await import("./support/fake-supabase");
   return { supabaseAdmin: createFakeSupabase() };
@@ -69,9 +74,14 @@ const ENV_KEYS = [
   "PAYMENT_MIN_USDT",
   "PAYMENT_MAX_USDT",
 ] as const;
-const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+const savedEnv = Object.fromEntries(
+  [...ENV_KEYS, ...MODE_ENV_KEYS].map((k) => [k, process.env[k]]),
+);
 afterAll(() => {
-  for (const k of ENV_KEYS) process.env[k] = savedEnv[k] ?? "";
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
 });
 
 const USDC = (major: string) => BigInt(Math.round(Number(major) * 1e6));
@@ -84,6 +94,7 @@ let wallet: Keypair;
 function sandbox() {
   process.env["STABLES_API_KEY"] = "sti_test_fixture";
   process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
+  process.env["LAMPORTPAY_MODE"] = "test";
 }
 
 function holds(tokens: { usdc?: string; usdt?: string }, sol = 10n * SOL) {
@@ -124,6 +135,9 @@ beforeEach(() => {
   db.reset();
   vi.resetAllMocks();
   Object.assign(process.env, {
+    // Real-funds paths are exercised under a complete LIVE configuration
+    // (with the code lock mocked open); sandbox() switches to TEST MODE.
+    ...LIVE_ENV,
     STABLES_API_KEY: "sti_live_fixture",
     STABLES_API_URL: "https://api.stables.money",
     PAYMENT_MIN_USDC: "100",
@@ -160,10 +174,15 @@ async function verified() {
 }
 
 function create(
-  extra: { wallet?: string | null; preferredCurrency?: "auto" | "usdc" | "usdt" } = {},
+  extra: {
+    wallet?: string | null;
+    preferredCurrency?: "auto" | "usdc" | "usdt";
+    /** TEST MODE allows 1–5,000 USDC only. */
+    amount?: string;
+  } = {},
 ) {
   return service.createPayment(user, {
-    amount: "150",
+    amount: extra.amount ?? "150",
     country: "GB",
     currency: "gbp",
     wallet: extra.wallet === undefined ? wallet.publicKey.toBase58() : extra.wallet,
@@ -266,8 +285,9 @@ describe("readiness before a firm quote", () => {
   it("quotes a tentative choice in the sandbox, and records that the check was skipped", async () => {
     sandbox();
     await verified();
-    stablesPrices("gbp", { usdc: "111.66" });
-    const p = await create({ wallet: null });
+    stablesPrices("gbp", { usdc: "7.44" });
+    // TEST MODE limit: 1–5,000 USDC per payment.
+    const p = await create({ wallet: null, amount: "10" });
     const q = await service.quotePayment(user, p.id);
     expect(q.status).toBe("QUOTED");
     const quoted = events(p.id).find((e) => e["to_status"] === "QUOTED");
@@ -305,13 +325,46 @@ describe("re-checking the settlement", () => {
     });
   });
 
-  it("is locked once a firm quote exists", async () => {
+  it("after the quote, re-reads the balance only: coin, amount and fee stay as quoted", async () => {
     await verified();
     stablesPrices("gbp", { usdc: "111.66" });
     holds({ usdc: "200" });
     const q = await service.quotePayment(user, (await create()).id);
+    holds({ usdc: "50" }); // funds moved away after the quote
+    ageEvents();
+    const short = await service.recheckSettlement(user, q.id, {});
+    expect(short.settlement?.kind).not.toBe("funds_ready");
+
+    holds({ usdc: "200" }); // the user topped up the wallet
+    ageEvents();
+    const again = await service.recheckSettlement(user, q.id, { preferredCurrency: "usdt" });
+    expect(again.status).toBe("QUOTED");
+    expect(again.source.currency).toBe("usdc");
+    expect(again.quote?.id).toBe(q.quote?.id);
+    expect(again.totalToPay).toEqual(q.totalToPay);
+    expect(again.settlement).toMatchObject({ kind: "funds_ready", coin: "usdc" });
+    expect(events(q.id).map((e) => e["kind"])).not.toContain("settlement_changed");
+  });
+
+  it("never changes the coin after the quote", async () => {
+    await verified();
+    stablesPrices("gbp", { usdc: "111.66", usdt: "112.04" });
+    holds({ usdc: "200" });
+    const q = await service.quotePayment(user, (await create()).id);
+    holds({ usdt: "500" }); // only the other coin now
     ageEvents();
     await expect(service.recheckSettlement(user, q.id, {})).rejects.toMatchObject({
+      status: 409,
+      code: "settlement_locked",
+    });
+    const after = events(q.id);
+    expect(after.map((e) => e["kind"])).not.toContain("settlement_changed");
+  });
+
+  it("is locked once the transfer exists", async () => {
+    const { payment } = await awaitingFunds();
+    ageEvents();
+    await expect(service.recheckSettlement(user, payment.id, {})).rejects.toMatchObject({
       status: 409,
       code: "settlement_locked",
     });
@@ -541,12 +594,13 @@ function mockOrders(order = jupiterOrder()) {
 }
 
 describe("swaps", () => {
-  it("are refused with the Stables sandbox", async () => {
-    sandbox();
+  it("are refused in TEST MODE (Stables sandbox): Jupiter has no devnet", async () => {
     const p = await needsSwap();
+    // The same payment on a TEST MODE server: no Jupiter order for a wallet.
+    sandbox();
     await expect(swaps.orderSwap(user, p.id)).rejects.toMatchObject({
       status: 409,
-      code: "sandbox_swap_disabled",
+      code: "test_mode_no_real_funds",
     });
   });
 

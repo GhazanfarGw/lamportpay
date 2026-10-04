@@ -22,7 +22,7 @@ function Contact() {
     email: "",
     company: "",
     role: "User",
-    interest: "Demo access",
+    interest: "Early access",
     message: "",
   });
   const set =
@@ -67,7 +67,7 @@ function Contact() {
                   email: "",
                   company: "",
                   role: "User",
-                  interest: "Demo access",
+                  interest: "Early access",
                   message: "",
                 });
               }}
@@ -126,7 +126,7 @@ function Contact() {
                   onChange={set("interest")}
                   className="w-full rounded-xl border border-border bg-background px-3 py-2.5"
                 >
-                  {["Demo access", "Partnership", "API access", "Investment", "Other"].map((r) => (
+                  {["Early access", "Partnership", "API access", "Investment", "Other"].map((r) => (
                     <option key={r}>{r}</option>
                   ))}
                 </select>

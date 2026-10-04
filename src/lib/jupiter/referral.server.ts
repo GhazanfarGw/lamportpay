@@ -5,6 +5,10 @@
  * the swap and pays it to the referral account's token accounts (it keeps 20%);
  * nothing passes through a LamportPay wallet and the user signs their own swap.
  * Null (no fee) until the owner has created the referral account.
+ *
+ * DORMANT since 2026-09-30: LamportPay charges one total fee, so the swap fee
+ * is always 0 and no referral is attached. Kept so that, if the owner later
+ * decides to collect part of that one fee inside the swap, the plumbing exists.
  */
 import { getBusinessSettings } from "@/lib/business-settings.server";
 import { JupiterError, swapReferralFrom, type SwapReferral } from "./client.server";

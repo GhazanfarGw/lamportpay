@@ -41,20 +41,22 @@ describe("LamportPay fee config", () => {
 });
 
 describe("conversion fee math (6-decimal stablecoins)", () => {
-  it("charges 2% on top of the Stables deposit", () => {
-    // 100 USDC deposit -> 2 USDC fee -> user pays 102 USDC.
-    expect(totalToPayMinor(100_000_000n, 200n)).toEqual({
-      depositMinor: 100_000_000n,
+  it("takes 2% of what the user sends: 98 to Stables + 2 fee = 100 from the wallet", () => {
+    // Owner decision 2026-09-30: the fee comes out of the total, it is not added on top.
+    expect(totalToPayMinor(98_000_000n, 200n)).toEqual({
+      depositMinor: 98_000_000n,
       feeMinor: 2_000_000n,
-      totalMinor: 102_000_000n,
+      totalMinor: 100_000_000n,
     });
+    // 147 to Stables → 3 fee → 150 sent (the /pay example).
+    expect(conversionFeeMinor(147_000_000n, 200n)).toBe(3_000_000n);
   });
 
   it("rounds the fee up to the smallest unit, never down", () => {
-    // 2% of 0.000049 USDC = 0.00000098 -> 1 minor unit.
+    // 2% of the total for 0.000049 net = 0.000001 (rounded up).
     expect(conversionFeeMinor(49n, 200n)).toBe(1n);
-    // 2% of 123.456789 USDC = 2.46913578 -> 2.469136.
-    expect(conversionFeeMinor(123_456_789n, 200n)).toBe(2_469_136n);
+    // 123.456789 net → fee 2.519527 (2% of 125.976316, rounded up).
+    expect(conversionFeeMinor(123_456_789n, 200n)).toBe(2_519_527n);
   });
 
   it("charges nothing when the fee is off", () => {

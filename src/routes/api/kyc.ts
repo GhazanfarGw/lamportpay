@@ -8,6 +8,8 @@ const StartKycInput = z
   .object({
     firstName: z.string().trim().max(100).optional(),
     lastName: z.string().trim().max(100).optional(),
+    /** Only for accounts without an email (wallet sign-in); used once, for the partner. */
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
   })
   .strict();
 

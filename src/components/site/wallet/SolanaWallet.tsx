@@ -5,14 +5,22 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
 import { clusterApiUrl } from "@solana/web3.js";
-import { ShieldAlert, Copy, Check, Wallet, LogOut, ChevronDown } from "lucide-react";
+import { clientBuildMode } from "@/lib/app-mode";
+import { ShieldAlert, Copy, Check, Wallet, LogOut, ChevronDown, ExternalLink } from "lucide-react";
 
 /**
- * Solana wallet context. Mainnet-beta, since Jupiter swap routing only
- * exists on mainnet.
+ * Solana wallet context on the cluster of this app's mode: devnet in TEST
+ * MODE (test assets only), mainnet-beta in LIVE MODE. The server enforces the
+ * same split; this only decides where the browser's wallet connection points.
  */
 export function SolanaWalletProvider({ children }: { children: ReactNode }) {
-  const endpoint = useMemo(() => clusterApiUrl(WalletAdapterNetwork.Mainnet), []);
+  const endpoint = useMemo(
+    () =>
+      clusterApiUrl(
+        clientBuildMode() === "live" ? WalletAdapterNetwork.Mainnet : WalletAdapterNetwork.Devnet,
+      ),
+    [],
+  );
   const wallets = useMemo(() => {
     if (typeof window === "undefined") return [];
     return [new PhantomWalletAdapter(), new SolflareWalletAdapter()];
@@ -33,13 +41,40 @@ export function shortAddress(a: string) {
 
 export const SEED_PHRASE_WARNING = "Never share your seed phrase or private key.";
 
-/** Compact connect button + wallet picker for the site header. */
-export function WalletConnectButton() {
+/**
+ * Compact connect button + wallet picker for the site header. `openRequest`
+ * (a counter) opens the picker when a page asks for a wallet. When connected,
+ * the button opens a small menu (copy, explorer, disconnect) instead of
+ * disconnecting on a single click.
+ */
+export function WalletConnectButton({
+  openRequest = 0,
+  onPick,
+  pickerFooter,
+}: {
+  openRequest?: number;
+  /** Called when the user picks a wallet in the picker (a user-initiated connect). */
+  onPick?: () => void;
+  /** Extra content at the bottom of the wallet picker. */
+  pickerFooter?: ReactNode;
+} = {}) {
   const { wallets, wallet, select, connect, disconnect, connecting, connected, publicKey } =
     useWallet();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [pendingWalletName, setPendingWalletName] = useState<string | null>(null);
   const address = publicKey?.toBase58() ?? "";
+
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true);
+  }, [openRequest]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open]);
 
   useEffect(() => {
     if (!pendingWalletName || connecting || connected) return;
@@ -64,20 +99,77 @@ export function WalletConnectButton() {
       setOpen(false);
       setPendingWalletName(name);
       select(name);
+      onPick?.();
     },
-    [select],
+    [select, onPick],
   );
 
   if (connected && address) {
     return (
-      <button
-        onClick={() => disconnect()}
-        className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold hover:bg-secondary transition"
-      >
-        <span className="w-2 h-2 rounded-full bg-[color:var(--success)]" />
-        <span className="font-mono">{shortAddress(address)}</span>
-        <LogOut className="w-3.5 h-3.5 text-muted-foreground" />
-      </button>
+      <div className="relative">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold hover:bg-secondary transition"
+        >
+          {wallet?.adapter.icon ? (
+            <img src={wallet.adapter.icon} alt="" className="w-5 h-5 rounded" />
+          ) : (
+            <Wallet className="w-4 h-4" />
+          )}
+          <span className="font-mono">{shortAddress(address)}</span>
+          <span className="w-2 h-2 rounded-full bg-[color:var(--success)]" aria-label="Connected" />
+          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+        {open && (
+          <>
+            <button
+              type="button"
+              aria-label="Close"
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setOpen(false)}
+            />
+            <div className="absolute right-0 z-50 mt-2 w-64 rounded-xl border border-border bg-card p-1.5 shadow-[var(--shadow-elegant)]">
+              <div className="px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Connected{wallet ? ` · ${wallet.adapter.name}` : ""}
+                </div>
+                <div className="font-mono text-xs break-all mt-1">{address}</div>
+              </div>
+              <button
+                onClick={() => {
+                  void navigator.clipboard?.writeText(address);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-secondary transition text-left"
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {copied ? "Copied" : "Copy address"}
+              </button>
+              <a
+                href={`https://explorer.solana.com/address/${address}${clientBuildMode() === "live" ? "" : "?cluster=devnet"}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-secondary transition"
+              >
+                <ExternalLink className="w-4 h-4" />
+                View on Solana Explorer
+              </a>
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  void disconnect();
+                }}
+                className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition text-left"
+              >
+                <LogOut className="w-4 h-4" />
+                Disconnect
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     );
   }
 
@@ -93,21 +185,36 @@ export function WalletConnectButton() {
         <ChevronDown className="w-3.5 h-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-border bg-card p-1.5 shadow-[var(--shadow-soft)]">
-          {wallets.map((w) => (
-            <button
-              key={w.adapter.name}
-              onClick={() => pick(w.adapter.name)}
-              className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium hover:bg-secondary transition text-left"
-            >
-              <img src={w.adapter.icon} alt="" className="w-5 h-5 rounded" />
-              <span className="flex-1">{w.adapter.name}</span>
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {w.readyState === "Installed" ? "Detected" : "Install"}
-              </span>
-            </button>
-          ))}
-        </div>
+        <>
+          <button
+            type="button"
+            aria-label="Close"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-50 mt-2 w-60 rounded-xl border border-border bg-card p-1.5 shadow-[var(--shadow-elegant)]">
+            <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+              Choose a Solana wallet
+            </div>
+            {wallets.map((w) => (
+              <button
+                key={w.adapter.name}
+                onClick={() => pick(w.adapter.name)}
+                className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium hover:bg-secondary transition text-left"
+              >
+                <img src={w.adapter.icon} alt="" className="w-5 h-5 rounded" />
+                <span className="flex-1">{w.adapter.name}</span>
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {w.readyState === "Installed" ? "Detected" : "Install"}
+                </span>
+              </button>
+            ))}
+            <p className="px-3 py-2 text-[11px] text-muted-foreground">
+              Connecting shares your public address only.
+            </p>
+            {pickerFooter}
+          </div>
+        </>
       )}
     </div>
   );

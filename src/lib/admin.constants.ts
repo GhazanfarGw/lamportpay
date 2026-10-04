@@ -144,6 +144,10 @@ export type AdminStablesPaymentRow = {
   travel_rule_resolved_at: string | null;
   /** Set by the server: a deposit was rejected although funds reached Stables. */
   deposit_issue?: boolean;
+  /** Set by the server: last status change (from the payment's events). */
+  status_changed_at?: string | null;
+  /** Set by the server: waiting too long, and on whom (lib/payments/stuck). */
+  stuck?: { waitingOn: "stables" | "user"; label: string } | null;
 };
 
 /** A stored Travel Rule request whose reference matched no payment. */

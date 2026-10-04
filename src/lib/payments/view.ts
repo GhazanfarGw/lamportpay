@@ -2,6 +2,7 @@
  * The payment shape returned to the browser. Minor units travel as strings
  * (JSON has no bigint); `amount` fields are major-unit strings for display.
  */
+import type { KycState } from "@/lib/identity/kyc-state";
 import { toMajor } from "@/lib/money";
 import { PAYMENT_CURRENCY_MINTS, SOL_MINT } from "@/lib/tokens";
 import { isPaymentState, isTerminal, type PaymentState } from "./state";
@@ -35,7 +36,19 @@ export type PaymentView = {
    * same transaction. Null when the payment carries none. The revenue wallet is
    * deliberately not part of the view.
    */
-  platformFee: { bps: number; amountMinor: string; amount: string; currency: string } | null;
+  platformFee: {
+    bps: number;
+    /** Which part of the fee model decided the amount: percentage, minimum or maximum. */
+    rule: string;
+    amountMinor: string;
+    amount: string;
+    currency: string;
+    /**
+     * Whether the fee reached LamportPay in the verified funding transaction:
+     * null until funding is verified. The destination is never exposed.
+     */
+    settled: boolean | null;
+  } | null;
   /** What leaves the wallet in total: the Stables amount plus LamportPay's fee. */
   totalToPay: { amountMinor: string; amount: string; currency: string };
   quote: { id: string; expiresAt: string | null } | null;
@@ -68,6 +81,17 @@ export type PaymentView = {
   depositIssue: { received: string; expected: string; reason: string; at: string } | null;
   /** An admin simulated the deposit (sandbox), so there is no Solana transaction. */
   simulatedDeposit: boolean;
+  /**
+   * TEST MODE only: the user's real devnet "Pay Now" transaction (a signed memo
+   * that moves no funds), verified on devnet before the sandbox deposit was
+   * simulated. Null until detected.
+   */
+  testPayment: {
+    signature: string;
+    wallet: string;
+    explorerUrl: string;
+    detectedAt: string;
+  } | null;
   /** The latest settlement check: which coin pays, and whether a swap is needed. */
   settlement: SettlementView | null;
   /** The most recent swap attempt, if any. */
@@ -215,6 +239,15 @@ export type KycStatus = {
    * holds no name.
    */
   verifiedName: string | null;
+  /** Derived customer state (lib/identity/kyc-state): never from a wallet alone. */
+  state: KycState;
+  /** When Stables first approved verification and payouts, as we recorded it. */
+  verifiedAt: string | null;
+  /**
+   * True when Stables could not be reached for a fresh status; the stored
+   * status is shown instead and is never upgraded to verified by this.
+   */
+  providerUnavailable: boolean;
 };
 
 /** Fees as stored in `payments.fees`. */
@@ -235,6 +268,8 @@ type Row = {
   /** LamportPay's fee snapshot (absent on older rows). */
   platform_fee_bps?: number | null;
   platform_fee_minor?: number | null;
+  platform_fee_received_minor?: number | null;
+  platform_fee_rule?: string | null;
   quote_id: string | null;
   quote_expires_at: string | null;
   transfer_id: string | null;
@@ -405,6 +440,22 @@ function isBeneficiarySummary(value: unknown): value is BeneficiarySummary {
   );
 }
 
+/** The verified TEST MODE payment transaction, from its audit event. */
+function testPaymentOf(events: EventRow[]): PaymentView["testPayment"] {
+  const event = [...events].reverse().find((e) => e.kind === "test_payment_detected");
+  const d = event?.detail as Record<string, unknown> | null | undefined;
+  if (!event || !d || typeof d["signature"] !== "string" || typeof d["wallet"] !== "string") {
+    return null;
+  }
+  const signature = d["signature"];
+  return {
+    signature,
+    wallet: d["wallet"],
+    explorerUrl: `https://explorer.solana.com/tx/${signature}?cluster=devnet`,
+    detectedAt: event.created_at,
+  };
+}
+
 /** Latest rejected deposit that still moved funds, unless a later one was verified. */
 function depositIssueOf(row: Row, events: EventRow[]): PaymentView["depositIssue"] {
   if (row.funding_signature) return null;
@@ -498,9 +549,13 @@ export function toPaymentView(
       feeMinor > 0n
         ? {
             bps: row.platform_fee_bps ?? 0,
+            rule: row.platform_fee_rule ?? "percentage",
             amountMinor: feeMinor.toString(),
             amount: toMajor(feeMinor, depositCurrency),
             currency: depositCurrency,
+            settled: row.funding_verified_at
+              ? BigInt(row.platform_fee_received_minor ?? 0) >= feeMinor
+              : null,
           }
         : null,
     totalToPay: {
@@ -545,6 +600,7 @@ export function toPaymentView(
     completedAt: completedAtOf(events),
     depositIssue: depositIssueOf(row, events),
     simulatedDeposit: events.some((e) => e.kind === "sandbox_deposit_simulated"),
+    testPayment: testPaymentOf(events),
     settlement: settlementOf(events, row.destination_currency),
     latestSwap: latest ? toSwapView(latest) : null,
     payoutEstimateMinutes: null,

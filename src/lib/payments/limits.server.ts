@@ -54,9 +54,45 @@ export function getPaymentLimits(currency: PaymentCurrency = "usdc"): PaymentLim
   };
 }
 
+/**
+ * Limits set by an admin (C07), in minor units: `maxMinor` null means no
+ * LamportPay maximum (Stables' limits decide). Throws when invalid, like .env.
+ */
+export function limitsFromMinor(
+  minMinor: bigint,
+  maxMinor: bigint | null,
+  currency: PaymentCurrency,
+): PaymentLimits {
+  const code = currency.toUpperCase();
+  if (minMinor <= 0n) throw new Error(`The ${code} minimum must be greater than zero.`);
+  if (maxMinor !== null && maxMinor < minMinor) {
+    throw new Error(`The ${code} minimum is above the ${code} maximum.`);
+  }
+  return {
+    minMinor,
+    maxMinor,
+    min: toMajor(minMinor, currency),
+    max: maxMinor === null ? null : toMajor(maxMinor, currency),
+  };
+}
+
+/** Limits from their major-unit strings (as carried in business settings). */
+export function limitsFromMajor(
+  limits: { min: string; max: string | null },
+  currency: PaymentCurrency,
+): PaymentLimits {
+  return limitsFromMinor(
+    toMinor(limits.min, currency),
+    limits.max === null ? null : toMinor(limits.max, currency),
+    currency,
+  );
+}
+
 /** Whether `amountMinor` is outside LamportPay's own limits. */
 export function outsideLimits(amountMinor: bigint, limits: PaymentLimits): boolean {
-  return amountMinor < limits.minMinor || (limits.maxMinor !== null && amountMinor > limits.maxMinor);
+  return (
+    amountMinor < limits.minMinor || (limits.maxMinor !== null && amountMinor > limits.maxMinor)
+  );
 }
 
 /** "Payments must be between 100 and 1,000,000 USDC." or "... at least 100 USDC." */

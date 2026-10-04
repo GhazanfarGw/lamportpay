@@ -85,6 +85,22 @@ export async function listPaymentEvents(paymentId: string) {
   return data;
 }
 
+/** The payment an event of `kind` with this signature belongs to (replay protection). */
+export async function getPaymentEventBySignature(
+  kind: string,
+  signature: string,
+): Promise<{ payment_id: string } | null> {
+  const { data, error } = await supabaseAdmin
+    .from("payment_events")
+    .select("payment_id")
+    .eq("kind", kind)
+    .eq("detail->>signature", signature)
+    .limit(1)
+    .maybeSingle();
+  if (error) fail("Load payment event by signature", error);
+  return data;
+}
+
 /** A user's payments, newest first. */
 export async function listPaymentsForUser(userId: string, limit: number): Promise<PaymentRow[]> {
   const { data, error } = await supabaseAdmin

@@ -27,9 +27,11 @@ describe("pre-transfer states", () => {
     expect(ok("PAYMENT_CREATED", "KYC_APPROVED")).toBe(true);
   });
 
-  it("never quotes or starts a transfer without an approved customer", () => {
-    expect(ok("PAYMENT_CREATED", "QUOTED")).toBe(false);
-    expect(ok("KYC_PENDING", "QUOTED")).toBe(false);
+  it("quotes before verification, but never starts a transfer without a quote", () => {
+    // Quote first, verify later: verification must not block the quote.
+    expect(ok("PAYMENT_CREATED", "QUOTED")).toBe(true);
+    expect(ok("KYC_PENDING", "QUOTED")).toBe(true);
+    expect(ok("PAYMENT_CREATED", "CREATED")).toBe(false);
     expect(ok("KYC_APPROVED", "CREATED")).toBe(false);
     expect(ok("KYC_PENDING", "AWAITING_FUNDS_COLLECTION")).toBe(false);
   });

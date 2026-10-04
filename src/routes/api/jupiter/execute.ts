@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
+import { ModeGuardError } from "@/lib/app-mode.server";
 import { JupiterError } from "@/lib/jupiter/client.server";
 import { SwapOrderError, relaySwapOrder } from "@/lib/jupiter/swap-orders.server";
 import { authenticateUser } from "@/lib/payments/auth.server";
@@ -61,6 +62,7 @@ async function requireUser(
 
 /** A Jupiter or swap-order failure as an HTTP answer; Jupiter's own refusals are 502. */
 function failure(e: unknown): Response {
+  if (e instanceof ModeGuardError) return errorResponse(e.message, 403);
   if (e instanceof SwapOrderError) return errorResponse(e.message, e.status);
   if (e instanceof JupiterError) {
     return errorResponse(e.message, e.status === 422 ? 502 : e.status);

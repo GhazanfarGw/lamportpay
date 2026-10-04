@@ -7,9 +7,11 @@
  */
 import { PublicKey } from "@solana/web3.js";
 
-import { rpc } from "./solana-rpc.server";
+import { MODE_PROFILES } from "./app-mode";
+import { currentMode } from "./app-mode.server";
+import { activeCluster, rpc } from "./solana-rpc.server";
 import { associatedTokenAddress, isValidPublicKey } from "./solana-usdc.server";
-import { PAYMENT_CURRENCIES, PAYMENT_CURRENCY_MINTS, type PaymentCurrency } from "./tokens";
+import { PAYMENT_CURRENCIES, type PaymentCurrency } from "./tokens";
 
 /** Classic SPL Token program, which both payment mints use. */
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -52,10 +54,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Mainnet RPC call that never throws, so every failure takes the "unavailable" path. */
+/**
+ * RPC call on the mode's cluster (TEST: devnet, LIVE: mainnet) that never
+ * throws, so every failure takes the "unavailable" path.
+ */
 async function call(method: string, params: unknown[]): Promise<Read<unknown>> {
   try {
-    const res = await rpc<unknown>("mainnet-beta", method, params);
+    const res = await rpc<unknown>(activeCluster(), method, params);
     return res.ok ? { ok: true, value: res.result } : { ok: false, reason: res.error };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : "RPC call failed." };
@@ -134,12 +139,18 @@ export async function readWalletHoldings(owner: string): Promise<WalletHoldings>
   const ownerKey = new PublicKey(owner);
   const canonical = ownerKey.toBase58();
 
+  // The mode decides the assets: TEST reads devnet test USDC; LIVE reads real
+  // mainnet coins. A coin with no asset in this mode (USDT on devnet) truly is 0.
+  const mints = MODE_PROFILES[currentMode().mode].mints;
   const [sol, tokenReads] = await Promise.all([
     readSol(canonical),
     Promise.all(
-      PAYMENT_CURRENCIES.map((currency) =>
-        readTokenBalance(ownerKey, PAYMENT_CURRENCY_MINTS[currency], currency.toUpperCase()),
-      ),
+      PAYMENT_CURRENCIES.map((currency): Promise<Read<bigint>> => {
+        const mint = mints[currency];
+        return mint
+          ? readTokenBalance(ownerKey, mint, currency.toUpperCase())
+          : Promise.resolve({ ok: true, value: 0n });
+      }),
     ),
   ]);
 

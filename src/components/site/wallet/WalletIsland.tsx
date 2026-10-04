@@ -2,6 +2,7 @@ import { Component, lazy, Suspense, useState, type ReactElement, type ReactNode 
 import { ClientOnly } from "@tanstack/react-router";
 
 import type { FundingPanelProps } from "./FundingPanel";
+import type { TestPayPanelProps } from "./TestPayPanel";
 import type { PaymentSwapPanelProps } from "./PaymentWallet";
 import type { SwapExecution } from "./SwapPanel";
 
@@ -165,6 +166,33 @@ function WalletButtonClient() {
   );
 }
 
+const AppControl = lazy(async () => {
+  if (typeof window === "undefined") return { default: WalletFallbackButton };
+  const polyfill = await import("@/lib/buffer-polyfill");
+  polyfill.installBufferPolyfill();
+  const m = await import("./AppWallet");
+  return { default: m.AppWalletControl };
+});
+
+/**
+ * The dApp header's wallet control. Unlike the marketing header, it loads the
+ * wallet right away (auto-reconnecting a trusted wallet) and shares the
+ * connection with the page, so /pay needs no connect UI of its own.
+ */
+export function AppWalletIsland() {
+  return (
+    <ClientOnly fallback={<WalletFallbackButton />}>
+      <WalletErrorBoundary fallback={<WalletFallbackButton />}>
+        <Suspense fallback={<WalletFallbackButton />}>
+          <Providers>
+            <AppControl />
+          </Providers>
+        </Suspense>
+      </WalletErrorBoundary>
+    </ClientOnly>
+  );
+}
+
 /** Full wallet panel: connect, address, safety warning. */
 export function WalletPanelIsland() {
   return (
@@ -201,6 +229,23 @@ export function PaymentSwapIsland(props: PaymentSwapPanelProps) {
   return (
     <Island fallback={<WalletFallbackCard />}>
       <PaymentSwap {...props} />
+    </Island>
+  );
+}
+
+const TestPay = lazy(async () => {
+  if (typeof window === "undefined") return { default: WalletFallbackCard };
+  const polyfill = await import("@/lib/buffer-polyfill");
+  polyfill.installBufferPolyfill();
+  const m = await import("./TestPayPanel");
+  return { default: m.TestPayPanel };
+});
+
+/** TEST MODE "Pay Now": a real devnet transaction that moves no funds. */
+export function TestPayIsland(props: TestPayPanelProps) {
+  return (
+    <Island fallback={<WalletFallbackCard />}>
+      <TestPay {...props} />
     </Island>
   );
 }

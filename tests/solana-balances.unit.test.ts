@@ -5,7 +5,11 @@
 import { PublicKey } from "@solana/web3.js";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from "vitest";
 
-vi.mock("@/lib/solana-rpc.server", () => ({ rpc: vi.fn() }));
+vi.mock("@/lib/solana-rpc.server", () => ({
+  rpc: vi.fn(),
+  // Mirrors the real one: the cluster follows the server's mode.
+  activeCluster: () => (process.env["LAMPORTPAY_MODE"] === "live" ? "mainnet-beta" : "devnet"),
+}));
 
 import type { rpc as rpcFn } from "@/lib/solana-rpc.server";
 import { associatedTokenAddress } from "@/lib/solana-usdc.server";
@@ -124,6 +128,8 @@ let chain: Chain;
 const savedMargin = process.env["SOLANA_FEE_RESERVE_LAMPORTS"];
 
 beforeEach(async () => {
+  // These fixtures are mainnet coins: read them as LIVE MODE would.
+  vi.stubEnv("LAMPORTPAY_MODE", "live");
   // Fresh modules per test, so the per-process rent cache starts empty.
   vi.resetModules();
   rpcMock = vi.mocked((await import("@/lib/solana-rpc.server")).rpc);
@@ -136,6 +142,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   if (savedMargin === undefined) delete process.env["SOLANA_FEE_RESERVE_LAMPORTS"];
   else process.env["SOLANA_FEE_RESERVE_LAMPORTS"] = savedMargin;
@@ -572,4 +579,34 @@ describe("solFeeReserveMarginLamports", () => {
       );
     },
   );
+});
+
+describe("TEST MODE holdings", () => {
+  it("reads devnet test USDC on devnet, never mainnet coins, and has no devnet USDT", async () => {
+    vi.stubEnv("LAMPORTPAY_MODE", "test");
+    const { DEVNET_USDC_MINT } = await import("@/lib/app-mode");
+    const seen: string[] = [];
+    rpcMock.mockImplementation((async (cluster: string, method: string, params: unknown[]) => {
+      seen.push(cluster);
+      if (method === "getBalance") return chain.balance;
+      const address = String(params[0]);
+      if (address === ata(OWNER, DEVNET_USDC_MINT)) {
+        return {
+          ok: true,
+          result: {
+            context: { slot: SLOT },
+            value: tokenAccount({ mint: DEVNET_USDC_MINT, owner: OWNER, amount: "5000000" }),
+          },
+        };
+      }
+      if (address === ata(OWNER, USDC_MINT) || address === ata(OWNER, USDT_MINT)) {
+        throw new Error("mainnet coin read in TEST MODE");
+      }
+      return { ok: true, result: { context: { slot: SLOT }, value: null } };
+    }) as unknown as typeof rpcFn);
+
+    const holdings = await balances.readWalletHoldings(OWNER);
+    expect(holdings).toMatchObject({ status: "ok", tokens: { usdc: 5_000_000n, usdt: 0n } });
+    expect(new Set(seen)).toEqual(new Set(["devnet"]));
+  });
 });

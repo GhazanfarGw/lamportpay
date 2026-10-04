@@ -46,6 +46,7 @@ const DEFAULTS: Record<string, () => Row> = {
     platform_fee_minor: null,
     platform_fee_wallet: null,
     platform_fee_received_minor: null,
+    pricing_snapshot: null,
     reconciled_at: null,
     travel_rule_reference: null,
     travel_rule_verification_url: null,
@@ -64,6 +65,7 @@ const DEFAULTS: Record<string, () => Row> = {
     updated_at: now(),
     updated_by: null,
   }),
+  payment_fee_ledger: () => ({ component: "", bps: null, reference: null, created_at: now() }),
   payment_events: () => ({ detail: null, from_status: null, to_status: null, created_at: now() }),
   stables_customers: () => ({
     verification_status: null,
@@ -107,6 +109,11 @@ const DEFAULTS: Record<string, () => Row> = {
     received_at: now(),
     processed_at: null,
     process_error: null,
+  }),
+  app_mode_events: () => ({
+    user_id: null,
+    detail: {},
+    created_at: now(),
   }),
 };
 
@@ -271,7 +278,8 @@ class Query implements PromiseLike<Result> {
 
   private insertRow(input: Row): Row | Result {
     const row: Row = { ...DEFAULTS[this.table]!(), ...structuredClone(input) };
-    if (this.table === "payment_events") row["id"] = this.db.nextId();
+    if (this.table === "payment_events" || this.table === "payment_fee_ledger")
+      row["id"] = this.db.nextId();
     const conflict = this.violation(row);
     if (conflict) return conflict;
     this.rows().push(row);

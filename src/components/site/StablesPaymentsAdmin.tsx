@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Copy, RefreshCw, Wallet } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -81,7 +82,7 @@ function OpenTravelRule({ row }: { row: AdminStablesPaymentRow }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <Link
-            to="/admin/stables/$id"
+            to="/admin/payments/$id"
             params={{ id: row.id }}
             className="font-mono text-xs text-primary hover:underline"
           >
@@ -139,14 +140,50 @@ export function StablesPaymentsAdmin() {
   const query = useQuery({
     queryKey: ["admin-stables-payments"],
     queryFn: () => fetchPayments(),
+    // Statuses follow Stables; the server re-reads open transfers on each load.
+    refetchInterval: 15_000,
   });
   const data = query.data;
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
   if (data && !data.isAdmin) return null;
+
+  const statuses = [...new Set((data?.payments ?? []).map((p) => p.status))].sort();
+  const needle = search.trim().toLowerCase();
+  const visible = (data?.payments ?? []).filter(
+    (row) =>
+      (status === "all" || row.status === status) &&
+      (!needle ||
+        [row.id, row.transfer_id, row.user_id, row.payer_wallet, row.destination_country]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(needle))),
+  );
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Stables payments (live)</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="Search payments"
+            placeholder="Search ID, transfer, user, wallet, country"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 w-72 max-w-full rounded-md border border-border bg-background px-3 text-sm"
+          />
+          <select
+            aria-label="Filter by status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          >
+            <option value="all">All statuses</option>
+            {statuses.map((s) => (
+              <option key={s} value={s}>
+                {s.replace(/_/g, " ").toLowerCase()}
+              </option>
+            ))}
+          </select>
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -203,10 +240,15 @@ export function StablesPaymentsAdmin() {
           </div>
 
           <div className="rounded-2xl border border-border/60 bg-background divide-y divide-border/50">
-            {data.payments.length === 0 && (
-              <p className="p-4 text-sm text-muted-foreground">No payments yet.</p>
+            <div className="p-3 text-xs text-muted-foreground">
+              Latest {data.payments.length} payments · showing {visible.length}
+            </div>
+            {visible.length === 0 && (
+              <p className="p-4 text-sm text-muted-foreground">
+                {data.payments.length === 0 ? "No payments yet." : "No payments match the filter."}
+              </p>
             )}
-            {data.payments.map((row) => {
+            {visible.map((row) => {
               const rule = travelRuleStatus(row);
               return (
                 <div
@@ -215,7 +257,7 @@ export function StablesPaymentsAdmin() {
                 >
                   <div>
                     <Link
-                      to="/admin/stables/$id"
+                      to="/admin/payments/$id"
                       params={{ id: row.id }}
                       className="font-mono text-primary hover:underline"
                     >
@@ -237,6 +279,18 @@ export function StablesPaymentsAdmin() {
                   <div className="flex flex-wrap items-center gap-1">
                     <StatusText value={row.status} />
                     {rule && <TravelRulePill status={rule} />}
+                    {row.stuck && (
+                      <span
+                        title={
+                          row.stuck.waitingOn === "stables"
+                            ? "Our status mirrors Stables. Check what Stables reports: node scripts/stables-transfer-status.mjs <transfer_id> (sandbox), and run reconciliation."
+                            : "The transfer was created but no deposit was detected."
+                        }
+                        className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
+                      >
+                        {row.stuck.label}
+                      </span>
+                    )}
                     {row.deposit_issue && (
                       <span className="inline-flex items-center rounded-full border border-destructive/20 bg-destructive/10 px-2.5 py-0.5 text-[11px] font-semibold text-destructive">
                         Deposit mismatch

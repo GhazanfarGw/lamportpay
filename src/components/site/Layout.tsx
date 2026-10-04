@@ -1,24 +1,22 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Menu, X, Twitter, Linkedin, Github, Mail } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { WalletButtonIsland } from "@/components/site/wallet/WalletIsland";
-import logoAsset from "@/assets/lamportpay-logo.png.asset.json";
+import logoUrl from "@/assets/lamportpay-logo.png";
+import { cn } from "@/lib/utils";
 
-function BrandLogo({ className = "" }: { className?: string }) {
+export function BrandLogo({ className = "" }: { className?: string }) {
   return (
-    <span className={`relative block h-10 w-[160px] overflow-hidden ${className}`}>
-      <img
-        src={logoAsset.url}
-        alt="LamportPay logo"
-        className="absolute max-w-none"
-        style={{ width: 270, left: -52, top: -69 }}
-      />
-    </span>
+    <img
+      src={logoUrl}
+      alt="LamportPay"
+      width={154}
+      height={32}
+      className={cn("block h-8 w-auto", className)}
+    />
   );
 }
 
 const nav = [
-  { to: "/pay", label: "Pay" },
   { to: "/how-it-works", label: "How it works" },
   { to: "/workflow", label: "Workflow" },
   { to: "/whitepaper", label: "White paper" },
@@ -30,8 +28,6 @@ const nav = [
 
 export function SiteLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const showHeaderWallet = pathname !== "/swap";
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="sticky top-0 z-40 backdrop-blur-lg bg-background/75 border-b border-border/60 print:hidden">
@@ -54,7 +50,6 @@ export function SiteLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="hidden lg:flex items-center gap-2">
-            {showHeaderWallet && <WalletButtonIsland />}
             <div className="flex items-center gap-1 mr-1">
               {socialLinks.map(({ label, href, icon: Icon }) => (
                 <a
@@ -73,7 +68,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
               to="/pay"
               className="px-4 py-2 text-sm font-medium rounded-full bg-foreground text-background hover:opacity-90 transition"
             >
-              Send a payment
+              Convert
             </Link>
           </div>
           <button
@@ -87,11 +82,6 @@ export function SiteLayout({ children }: { children: ReactNode }) {
         {open && (
           <div className="lg:hidden border-t border-border bg-background">
             <div className="max-w-7xl mx-auto px-5 py-3 flex flex-col gap-1">
-              {showHeaderWallet && (
-                <div className="px-1 py-2">
-                  <WalletButtonIsland />
-                </div>
-              )}
               {nav.map((n) => (
                 <Link
                   key={n.to}
@@ -107,7 +97,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
                 onClick={() => setOpen(false)}
                 className="mt-2 px-4 py-2 text-center text-sm font-medium rounded-full bg-foreground text-background"
               >
-                Send a payment
+                Convert
               </Link>
               <div className="mt-3 flex items-center gap-2">
                 {socialLinks.map(({ label, href, icon: Icon }) => (
@@ -148,8 +138,8 @@ function SiteFooter() {
         <div className="md:col-span-2">
           <BrandLogo className="mb-3" />
           <p className="text-sm text-muted-foreground max-w-sm">
-            Crypto in. Local money out. A Solana-first crypto-to-local-currency payment routing
-            demo.
+            Crypto in. Local money out. Convert USDC from your own Solana wallet into local currency
+            in your own bank account.
           </p>
           <div className="mt-4 flex items-center gap-2">
             {socialLinks.map(({ label, href, icon: Icon }) => (
@@ -185,7 +175,7 @@ function SiteFooter() {
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li>
               <Link to="/pay" className="hover:text-foreground">
-                Send a payment
+                Convert
               </Link>
             </li>
             <li>
@@ -242,9 +232,10 @@ function SiteFooter() {
             </a>
           </div>
           <div>
-            Demo only. /swap may execute a small real Jupiter SOL-to-USDC swap back to the connected
-            wallet. LamportPay does not process fiat payout, KYC, FX conversion, bank payout, or
-            third-party recipient transfer.
+            LamportPay is non-custodial: it never holds customer funds or keys. Identity
+            verification, currency conversion and bank payouts are provided by a licensed payout
+            partner. LamportPay is in a controlled test phase; availability depends on country and
+            currency.
           </div>
         </div>
       </div>
