@@ -97,6 +97,7 @@ export type Database = {
           platform_fee_min_minor: number | null;
           id: boolean;
           payment_limits: Json | null;
+          payment_controls: Json | null;
           revenue_wallet: string | null;
           swap_fee_bps: number | null;
           updated_at: string;
@@ -109,6 +110,7 @@ export type Database = {
           platform_fee_min_minor?: number | null;
           id?: boolean;
           payment_limits?: Json | null;
+          payment_controls?: Json | null;
           revenue_wallet?: string | null;
           swap_fee_bps?: number | null;
           updated_at?: string;
@@ -121,6 +123,7 @@ export type Database = {
           platform_fee_min_minor?: number | null;
           id?: boolean;
           payment_limits?: Json | null;
+          payment_controls?: Json | null;
           revenue_wallet?: string | null;
           swap_fee_bps?: number | null;
           updated_at?: string;
@@ -356,6 +359,124 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "payment_fee_ledger_payment_id_fkey";
+            columns: ["payment_id"];
+            isOneToOne: false;
+            referencedRelation: "payments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      payment_case_events: {
+        Row: {
+          action: string;
+          actor_email: string | null;
+          actor_id: string | null;
+          case_id: string;
+          changes: Json | null;
+          created_at: string;
+          from_status: string | null;
+          id: number;
+          note: string | null;
+          to_status: string | null;
+        };
+        Insert: {
+          action: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          case_id: string;
+          changes?: Json | null;
+          created_at?: string;
+          from_status?: string | null;
+          id?: never;
+          note?: string | null;
+          to_status?: string | null;
+        };
+        Update: {
+          action?: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          case_id?: string;
+          changes?: Json | null;
+          created_at?: string;
+          from_status?: string | null;
+          id?: never;
+          note?: string | null;
+          to_status?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "payment_case_events_case_id_fkey";
+            columns: ["case_id"];
+            isOneToOne: false;
+            referencedRelation: "payment_cases";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      payment_cases: {
+        Row: {
+          asset: string | null;
+          closed_at: string | null;
+          created_at: string;
+          customer_notified_at: string | null;
+          id: string;
+          kind: string;
+          opened_by: string | null;
+          original_amount_minor: number | null;
+          original_wallet: string | null;
+          payment_id: string;
+          reason: string;
+          refund_amount_minor: number | null;
+          refund_destination: string | null;
+          refund_tx_signature: string | null;
+          stables_communication: string | null;
+          stables_reference: string | null;
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          asset?: string | null;
+          closed_at?: string | null;
+          created_at?: string;
+          customer_notified_at?: string | null;
+          id?: string;
+          kind: string;
+          opened_by?: string | null;
+          original_amount_minor?: number | null;
+          original_wallet?: string | null;
+          payment_id: string;
+          reason: string;
+          refund_amount_minor?: number | null;
+          refund_destination?: string | null;
+          refund_tx_signature?: string | null;
+          stables_communication?: string | null;
+          stables_reference?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          asset?: string | null;
+          closed_at?: string | null;
+          created_at?: string;
+          customer_notified_at?: string | null;
+          id?: string;
+          kind?: string;
+          opened_by?: string | null;
+          original_amount_minor?: number | null;
+          original_wallet?: string | null;
+          payment_id?: string;
+          reason?: string;
+          refund_amount_minor?: number | null;
+          refund_destination?: string | null;
+          refund_tx_signature?: string | null;
+          stables_communication?: string | null;
+          stables_reference?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "payment_cases_payment_id_fkey";
             columns: ["payment_id"];
             isOneToOne: false;
             referencedRelation: "payments";
@@ -837,6 +958,14 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      rate_limit_hit: {
+        Args: { p_bucket: string; p_key: string; p_limit: number; p_window_seconds: number };
+        Returns: boolean;
+      };
+      rate_limit_prune: {
+        Args: { p_older_than_seconds?: number };
+        Returns: number;
+      };
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"];

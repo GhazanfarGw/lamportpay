@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { handleUserRequest, json } from "@/lib/payments/http.server";
+import { USER_LIMITS } from "@/lib/payments/rate-limit.server";
 import { buildFundingTransaction } from "@/lib/payments/service.server";
 
 const FundingTransactionInput = z.object({ payer: z.string().trim().min(32).max(44) }).strict();
@@ -16,8 +17,12 @@ export const Route = createFileRoute("/api/payments/$paymentId/funding-transacti
   server: {
     handlers: {
       POST: ({ request, params }) =>
-        handleUserRequest(request, FundingTransactionInput, async (user, body) =>
-          json(await buildFundingTransaction(user, params.paymentId, body.payer)),
+        handleUserRequest(
+          request,
+          FundingTransactionInput,
+          async (user, body) =>
+            json(await buildFundingTransaction(user, params.paymentId, body.payer)),
+          USER_LIMITS.funding,
         ),
     },
   },

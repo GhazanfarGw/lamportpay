@@ -424,22 +424,22 @@ describe("payment limits", () => {
     for (const key of ENV_KEYS.filter((k) => k.startsWith("PAYMENT_"))) process.env[key] = "";
   });
 
-  it.each(["99.999999", "1000000.000001", "0"])(
-    "rejects %s USDC before calling Stables (defaults 100 to 1,000,000)",
+  it.each(["14.999999", "1000000.000001", "0"])(
+    "rejects %s USDC before calling Stables (defaults 15 to 1,000,000)",
     async (amount) => {
       await expect(
         service.createPayment(user, { amount, country: "IN", currency: "inr" }),
       ).rejects.toMatchObject({
         status: 400,
         code: "amount_out_of_range",
-        message: "Payments must be between 100 and 1,000,000 USDC.",
+        message: "Payments must be between 15 and 1,000,000 USDC.",
       });
       expect(api.createQuote).not.toHaveBeenCalled();
     },
   );
 
   it("accepts both default bounds", async () => {
-    await expect(createPayment("100")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
+    await expect(createPayment("15")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
     await expect(createPayment("1000000")).resolves.toMatchObject({ status: "PAYMENT_CREATED" });
   });
 
@@ -1537,7 +1537,7 @@ describe("sandbox deposit instructions", () => {
   // What the Stables sandbox returns instead of a Solana address (2026-09-27).
   const PLACEHOLDER = "sandbox:solana:45d790d05dc156bfb0e095e5a52f528c";
 
-  // TEST MODE (the sandbox) allows 1–5,000 USDC per payment; LIVE uses this file's 50–100.
+  // TEST MODE (the sandbox) allows 15–5,000 USDC per payment; LIVE uses this file's 50–100.
   async function transferWith(depositAddress: string, amount = "75") {
     const payment = await quotedPayment(amount);
     api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
@@ -1552,7 +1552,7 @@ describe("sandbox deposit instructions", () => {
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
     process.env["LAMPORTPAY_MODE"] = "test";
-    const view = await transferWith(PLACEHOLDER, "9");
+    const view = await transferWith(PLACEHOLDER, "19");
 
     expect(view).toMatchObject({ status: "AWAITING_FUNDS_COLLECTION", failureReason: null });
     expect(view.deposit).toBeNull();
@@ -1567,14 +1567,14 @@ describe("sandbox deposit instructions", () => {
     process.env["STABLES_API_KEY"] = "sti_test_fixture";
     process.env["STABLES_API_URL"] = "https://api.sandbox.stables.money";
     process.env["LAMPORTPAY_MODE"] = "test";
-    const payment = await quotedPayment("9");
+    const payment = await quotedPayment("19");
     api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
-    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", PLACEHOLDER, "9.5"));
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_1", PLACEHOLDER, "19.5"));
     const view = await service.createPaymentTransfer(user, payment.id, {
       purposeCode: "FAMILY_MAINTENANCE",
       beneficiary: BENEFICIARY,
     });
-    expect(view.failureReason).toMatch(/asks for 9.5 USDC, not the quoted 9 USDC/);
+    expect(view.failureReason).toMatch(/asks for 19.5 USDC, not the quoted 19 USDC/);
   });
 
   it("refuses the placeholder outside the sandbox", async () => {
@@ -2180,5 +2180,52 @@ describe("live status sync (no webhook, no reconcile command)", () => {
     api.getTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75", "completed"));
     await service.simulateSandboxDeposit(id, { id: "admin-1" });
     expect((await ledger.getPayment(id))?.status).toBe("COMPLETED");
+  });
+});
+
+describe("emergency controls (server-enforced)", () => {
+  const OPS = "00000000-0000-4000-8000-0000000000aa";
+  const setControls = (controls: unknown) =>
+    updateBusinessSettings({ paymentControls: { mode: "live", controls } }, OPS);
+
+  it("a global pause refuses new payments with 503 and creates nothing", async () => {
+    await setControls({ paused: true, reason: "incident" });
+    await expect(createPayment()).rejects.toMatchObject({ status: 503, code: "payments_paused" });
+    expect(db.table("payments")).toHaveLength(0);
+  });
+
+  it("a global pause also refuses the quote of an existing payment", async () => {
+    const payment = await paymentAwaitingKyc();
+    await setControls({ paused: true, reason: "incident" });
+    await expect(service.quotePayment(user, payment.id)).rejects.toMatchObject({
+      code: "payments_paused",
+    });
+  });
+
+  it("pausing one payout currency refuses only that currency", async () => {
+    await setControls({ paused: false, corridors: { INR: { paused: true, reason: "partner" } } });
+    await expect(createPayment()).rejects.toMatchObject({ status: 503, code: "corridor_paused" });
+    await setControls({ paused: false, corridors: { GBP: { paused: true, reason: "partner" } } });
+    await expect(createPayment()).resolves.toMatchObject({ status: expect.any(String) });
+  });
+
+  it("a corridor limit narrows the coin limits on the server", async () => {
+    // Coin limits in this file: 50–100. INR max 60 → 75 is refused before Stables is asked.
+    await setControls({ paused: false, corridors: { INR: { max_minor: 60_000_000 } } });
+    api.createQuote.mockClear();
+    await expect(createPayment("75")).rejects.toMatchObject({ code: "amount_out_of_range" });
+  });
+
+  it("a pause never touches payments already sent: Stables' status still applies", async () => {
+    const { id } = await paymentAwaitingFunds();
+    await setControls({ paused: true, reason: "incident" });
+    const row = db.table("payments").find((p) => p["id"] === id)!;
+    row["reconciled_at"] = new Date(Date.now() - 5 * 60_000).toISOString();
+    api.getTransfer.mockResolvedValueOnce(transfer("tr_1", newWallet(), "75", "completed"));
+    expect((await service.getPaymentView(user, id)).status).toBe("COMPLETED");
+  });
+
+  it("refuses a pause without a reason", async () => {
+    await expect(setControls({ paused: true })).rejects.toThrow(/reason/);
   });
 });

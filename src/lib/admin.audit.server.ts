@@ -4,7 +4,12 @@ import type { Database } from "@/integrations/supabase/types";
 
 export type AuditEntry = {
   entityType:
-    "kyc_submission" | "payout_transfer" | "user_role" | "admin_invite" | "business_settings";
+    | "kyc_submission"
+    | "payout_transfer"
+    | "user_role"
+    | "admin_invite"
+    | "business_settings"
+    | "payment_case";
   entityId?: string | null;
   entityReference?: string | null;
   action: string;

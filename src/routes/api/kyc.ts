@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { handleUserRequest, json } from "@/lib/payments/http.server";
+import { USER_LIMITS } from "@/lib/payments/rate-limit.server";
 import { getKycStatus, startKyc } from "@/lib/payments/service.server";
 
 const StartKycInput = z
@@ -25,10 +26,15 @@ export const Route = createFileRoute("/api/kyc")({
         handleUserRequest(request, undefined, async (user) => json(await getKycStatus(user))),
 
       POST: ({ request }) =>
-        handleUserRequest(request, StartKycInput, async (user, body) => {
-          const returnUrl = new URL("/pay?kyc=returned", request.url).toString();
-          return json(await startKyc(user, { ...body, returnUrl }));
-        }),
+        handleUserRequest(
+          request,
+          StartKycInput,
+          async (user, body) => {
+            const returnUrl = new URL("/pay?kyc=returned", request.url).toString();
+            return json(await startKyc(user, { ...body, returnUrl }));
+          },
+          USER_LIMITS.kyc,
+        ),
     },
   },
 });

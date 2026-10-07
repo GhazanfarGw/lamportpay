@@ -274,7 +274,8 @@ npm run webhook:send -- travel-rule <transfer_id>
 ## 8. Other checks
 
 - **Our limits:**
-  - 99 USDC is refused: "Payments must be between 100 and 1,000,000 USDC."
+  - 14.99 USDC is refused: "Payments must be between 15 and 1,000,000 USDC." (LIVE defaults;
+    TEST MODE reads "between 15 and 5,000 USDC").
   - Change `PAYMENT_MIN_USDT` in `.env` and restart: the USDT limit follows.
 - **Unknown events:** `npm run webhook:send -- unknown` gives 200, stored as "Ignored
   virtual_account.created."

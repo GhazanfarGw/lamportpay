@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { BeneficiarySchema } from "@/lib/payments/beneficiary-schema";
 import { handleUserRequest, json } from "@/lib/payments/http.server";
+import { USER_LIMITS } from "@/lib/payments/rate-limit.server";
 import { createPaymentTransfer } from "@/lib/payments/service.server";
 import { PURPOSE_CODES } from "@/lib/stables/types";
 
@@ -27,8 +28,11 @@ export const Route = createFileRoute("/api/payments/$paymentId/transfer")({
   server: {
     handlers: {
       POST: ({ request, params }) =>
-        handleUserRequest(request, TransferInput, async (user, body) =>
-          json(await createPaymentTransfer(user, params.paymentId, body)),
+        handleUserRequest(
+          request,
+          TransferInput,
+          async (user, body) => json(await createPaymentTransfer(user, params.paymentId, body)),
+          USER_LIMITS.transfer,
         ),
     },
   },

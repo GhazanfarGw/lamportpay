@@ -177,7 +177,7 @@ function create(
   extra: {
     wallet?: string | null;
     preferredCurrency?: "auto" | "usdc" | "usdt";
-    /** TEST MODE allows 1–5,000 USDC only. */
+    /** TEST MODE allows 15–5,000 USDC only. */
     amount?: string;
   } = {},
 ) {
@@ -286,8 +286,8 @@ describe("readiness before a firm quote", () => {
     sandbox();
     await verified();
     stablesPrices("gbp", { usdc: "7.44" });
-    // TEST MODE limit: 1–5,000 USDC per payment.
-    const p = await create({ wallet: null, amount: "10" });
+    // TEST MODE limit: 15–5,000 USDC per payment.
+    const p = await create({ wallet: null, amount: "20" });
     const q = await service.quotePayment(user, p.id);
     expect(q.status).toBe("QUOTED");
     const quoted = events(p.id).find((e) => e["to_status"] === "QUOTED");

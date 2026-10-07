@@ -195,12 +195,12 @@ describe("1. TEST MODE cannot call production endpoints", () => {
     expect(new URL(String(jupiterCalls[0]![0])).searchParams.has("taker")).toBe(false);
   });
 
-  it("enforces the 1–5,000 USDC TEST MODE limit on the server", async () => {
+  it("enforces the 15–5,000 USDC TEST MODE limit on the server", async () => {
     const { getBusinessSettings, clearBusinessSettingsCache } =
       await import("@/lib/business-settings.server");
     clearBusinessSettingsCache();
     const settings = await getBusinessSettings();
-    expect(settings.paymentLimits.usdc).toEqual({ min: "1", max: "5000" });
+    expect(settings.paymentLimits.usdc).toEqual({ min: "15", max: "5000" });
     expect(settings.sources.paymentLimits.usdc).toBe("test_mode");
 
     const { liveEstimate } = await import("@/lib/payments/live-estimate.server");
@@ -211,19 +211,19 @@ describe("1. TEST MODE cannot call production endpoints", () => {
     fetchMock.mockImplementation(async () =>
       Response.json({ message: "sandbox fixture" }, { status: 422 }),
     );
-    for (const ok of ["1", "10", "10.01", "5000"]) {
+    for (const ok of ["15", "15.01", "100", "5000"]) {
       const before = stablesCalls();
       const est = await estimateFor(ok);
       // Within the limit: Stables (sandbox) is asked to price it.
       expect(stablesCalls()).toBe(before + 1);
-      expect(est.payout.status === "refused" ? est.payout.reason : "").not.toMatch(/between 1 and/);
+      expect(est.payout.status === "refused" ? est.payout.reason : "").not.toMatch(/between 15 and/);
     }
-    for (const over of ["0.99", "5000.01"]) {
+    for (const over of ["14.99", "5000.01"]) {
       const before = stablesCalls();
       const est = await estimateFor(over);
       expect(est.payout).toEqual({
         status: "refused",
-        reason: "Payments must be between 1 and 5,000 USDC.",
+        reason: "Payments must be between 15 and 5,000 USDC.",
       });
       expect(stablesCalls()).toBe(before);
     }
@@ -234,8 +234,8 @@ describe("1. TEST MODE cannot call production endpoints", () => {
       await import("@/lib/business-settings.server");
     const stored = resolveBusinessSettings(null);
     expect(withModeLimits(stored, "live")).toBe(stored);
-    expect(withModeLimits(stored, "test").paymentLimits.usdc).toEqual({ min: "1", max: "5000" });
-    expect(stored.paymentLimits.usdc).not.toEqual({ min: "1", max: "5000" });
+    expect(withModeLimits(stored, "test").paymentLimits.usdc).toEqual({ min: "15", max: "5000" });
+    expect(stored.paymentLimits.usdc).not.toEqual({ min: "15", max: "5000" });
   });
 
   it("a LIVE request that fails its gates never reaches Jupiter either", async () => {

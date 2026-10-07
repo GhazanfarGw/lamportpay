@@ -29,6 +29,7 @@ import type { AuthenticatedUser } from "./auth.server";
 import { PaymentError } from "./errors";
 import * as ledger from "./ledger.server";
 import {
+  assertPaymentsOpen,
   FUNDABLE,
   latestSettlement,
   ownedPayment,
@@ -88,6 +89,7 @@ export async function confirmTestPayment(
   }
 
   const payment = await ownedPayment(user, paymentId);
+  await assertPaymentsOpen(null, { globalOnly: true, paymentId: payment.id });
   const events = await ledger.listPaymentEvents(payment.id);
   const detected = events.find((e) => e.kind === "test_payment_detected");
   if (detected) {

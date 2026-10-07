@@ -1,7 +1,8 @@
 /**
  * Per-payment limits, one pair per funding stablecoin, all configurable:
  *   PAYMENT_MIN_USDC / PAYMENT_MAX_USDC and PAYMENT_MIN_USDT / PAYMENT_MAX_USDT
- *   (defaults 100 and 1,000,000). A maximum of "none" means LamportPay sets no
+ *   (defaults 15 and 1,000,000). The minimum follows Stables' stated 15 USD
+ *   minimum (owner decision 7 Oct 2026, replacing 100). A maximum of "none" means LamportPay sets no
  *   maximum of its own and the payout partner's limits decide (owner decision,
  *   2026-09-29: "maximum as per Stables' limits").
  * Read per call from process.env. The dev server loads .env / .env.local at
@@ -12,7 +13,7 @@
 import { toMajor, toMinor } from "@/lib/money";
 import type { PaymentCurrency } from "@/lib/tokens";
 
-const DEFAULT_MIN = "100";
+const DEFAULT_MIN = "15";
 const DEFAULT_MAX = "1000000";
 
 export type PaymentLimits = {

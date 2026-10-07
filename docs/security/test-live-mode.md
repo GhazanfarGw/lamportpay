@@ -18,7 +18,7 @@ confirmation, opens it. Nothing the browser sends can change which endpoints the
 | Stables | sandbox URL, `sti_test_` key only | production URL, never a `sti_test_` key |
 | Database | dev project (never the live ref) | production project (never the dev ref) |
 | Jupiter | **read-only price quotes only** (no taker: no transaction is built, nothing can be signed) — real mainnet prices, fees, price impact and route on `/pay`. Building an order for a wallet and relaying a swap are blocked (Jupiter has no devnet). Owner decision 3 Oct 2026 (replaces the same-day "no calls at all") | quotes and swaps, only while LIVE MODE is fully active (`ok: true`) |
-| Payment limits | **1–5,000 USDC sent per payment**, forced by the TEST profile (`MODE_PROFILES.test.paymentLimits`), applied on read in `getBusinessSettings` — stored/admin and `.env` limits are untouched | business settings (admin or `.env`) |
+| Payment limits | **15–5,000 USDC sent per payment** (minimum 15 since 7 Oct 2026), forced by the TEST profile (`MODE_PROFILES.test.paymentLimits`), applied on read in `getBusinessSettings` — stored/admin and `.env` limits are untouched | business settings (admin or `.env`) |
 | Real funds | impossible (`test_mode_no_real_funds`) | yes, with an extra warning before each wallet approval |
 
 ## Enforcement (server)

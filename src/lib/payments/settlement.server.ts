@@ -21,7 +21,7 @@ import { StablesError } from "@/lib/stables/client.server";
 import type { StablesConfig } from "@/lib/stables/config.server";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 import { PaymentError } from "./errors";
-import { feeModelOf } from "@/lib/business-settings.server";
+import { feeModelOf, limitsForCorridor } from "@/lib/business-settings.server";
 import { platformFee as computePlatformFee, type FeeRule } from "./fee-math";
 import { getPaymentLimits, limitsFromMajor, limitsMessage, outsideLimits } from "./limits.server";
 import {
@@ -223,7 +223,8 @@ export async function planSettlement(
     priceCandidates(config, {
       ...input,
       coins: enabled,
-      limits: settings.paymentLimits,
+      // Coin limits, narrowed by the payout corridor's rule (emergency controls).
+      limits: limitsForCorridor(settings, input.currency),
       // Limits apply to what the user sends: converted amount + our fee.
       limitAmountMinor: input.amountMinor + feeMinor,
     }),

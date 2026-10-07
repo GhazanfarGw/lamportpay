@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
+import { attentionSignals, reachedFunds } from "./payments/attention";
 import { stuckSignal } from "./payments/stuck";
 import { z } from "zod";
 
@@ -7,25 +8,12 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { toPaymentView } from "@/lib/payments/view";
 import { logAdminActions } from "./admin.audit.server";
 import {
-  ADMIN_KYC_STATUSES,
-  ADMIN_PAYMENT_STATUSES,
-  ADMIN_QUOTE_STATUSES,
   ASSIGNABLE_ROLES,
-  AUDIT_COLUMNS,
-  KYC_COLUMNS,
   STABLES_PAYMENT_COLUMNS,
-  TRANSFER_COLUMNS,
-  TRANSFER_DETAIL_COLUMNS,
-  type AdminAuditRow,
   type AdminInviteRow,
-  type AdminKycRow,
   type AdminRoleRow,
   type AdminStablesPaymentRow,
-  type AdminTransferDetail,
-  type AdminTransferRow,
   type AdminUnmatchedTravelRule,
-  type PaymentStatus,
-  type QuoteStatus,
 } from "./admin.constants";
 
 async function requireAdmin(context: {
@@ -184,20 +172,63 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
     const listedIds = [...(recent.data ?? []), ...(open.data ?? [])].map(
       (r) => (r as { id: string }).id,
     );
-    const transitions = listedIds.length
-      ? await supabase
-          .from("payment_events")
-          .select("payment_id, created_at")
-          .in("payment_id", listedIds)
-          .not("to_status", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(1000)
-      : { data: [], error: null };
-    if (transitions.error) throw new Error(transitions.error.message);
-    const lastChange = new Map<string, string>();
-    for (const e of transitions.data ?? []) {
-      if (!lastChange.has(e.payment_id)) lastChange.set(e.payment_id, e.created_at);
+    const listedTransfers = [...(recent.data ?? []), ...(open.data ?? [])]
+      .map((r) => (r as { transfer_id: string | null }).transfer_id)
+      .filter((t): t is string => Boolean(t));
+    const [transitions, openCases, webhookErrors] = listedIds.length
+      ? await Promise.all([
+          supabase
+            .from("payment_events")
+            .select("payment_id, created_at, to_status")
+            .in("payment_id", listedIds)
+            .not("to_status", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(2000),
+          supabase
+            .from("payment_cases")
+            .select("payment_id, status")
+            .in("payment_id", listedIds)
+            .neq("status", "closed"),
+          listedTransfers.length
+            ? supabase
+                .from("stables_webhook_events")
+                .select("event_object_id")
+                .in("event_object_id", listedTransfers)
+                .is("processed_at", null)
+                .not("process_error", "is", null)
+                .limit(500)
+            : Promise.resolve({ data: [] as { event_object_id: string | null }[], error: null }),
+        ])
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+          { data: [], error: null },
+        ];
+    for (const r of [transitions, openCases, webhookErrors]) {
+      if (r.error) throw new Error(r.error.message);
     }
+    const lastChange = new Map<string, string>();
+    const statusesSeen = new Map<string, string[]>();
+    for (const e of (transitions.data ?? []) as {
+      payment_id: string;
+      created_at: string;
+      to_status: string | null;
+    }[]) {
+      if (!lastChange.has(e.payment_id)) lastChange.set(e.payment_id, e.created_at);
+      if (e.to_status)
+        statusesSeen.set(e.payment_id, [...(statusesSeen.get(e.payment_id) ?? []), e.to_status]);
+    }
+    const caseStatus = new Map(
+      ((openCases.data ?? []) as { payment_id: string; status: string }[]).map((c) => [
+        c.payment_id,
+        c.status,
+      ]),
+    );
+    const failedTransfers = new Set(
+      ((webhookErrors.data ?? []) as { event_object_id: string | null }[]).map(
+        (e) => e.event_object_id,
+      ),
+    );
 
     const text = (value: unknown) => (typeof value === "string" ? value : null);
     const fundsMoved = new Set(
@@ -212,11 +243,23 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
       ((rows ?? []) as AdminStablesPaymentRow[]).map((row) => {
         const statusChangedAt = lastChange.get(row.id) ?? null;
         const stuck = stuckSignal({ ...row, status_changed_at: statusChangedAt });
+        const depositIssue = !row.funding_signature && fundsMoved.has(row.id);
+        const openCaseStatus = caseStatus.get(row.id) ?? null;
+        const attention = attentionSignals({
+          ...row,
+          status_changed_at: statusChangedAt,
+          depositMismatch: depositIssue,
+          everCollectedFunds: reachedFunds(statusesSeen.get(row.id) ?? []),
+          webhookError: row.transfer_id ? failedTransfers.has(row.transfer_id) : false,
+          openCase: openCaseStatus !== null,
+        });
         return {
           ...row,
-          deposit_issue: !row.funding_signature && fundsMoved.has(row.id),
+          deposit_issue: depositIssue,
           status_changed_at: statusChangedAt,
           stuck: stuck && { waitingOn: stuck.waitingOn, label: stuck.label },
+          attention: attention.map(({ code, severity, label }) => ({ code, severity, label })),
+          open_case_status: openCaseStatus,
         };
       });
     return {
@@ -235,259 +278,6 @@ export const getStablesPaymentsAdmin = createServerFn({ method: "GET" })
           note: row.process_error,
         };
       }),
-    };
-  });
-
-export const getAdminOverview = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-
-    const { data: isAdmin, error: roleError } = await supabase.rpc("has_role", {
-      _user_id: userId,
-      _role: "admin",
-    });
-    if (roleError) throw new Error("Could not verify admin access.");
-    if (!isAdmin) {
-      return {
-        isAdmin: false,
-        kyc: [] as AdminKycRow[],
-        transfers: [] as AdminTransferRow[],
-        audit: [] as AdminAuditRow[],
-      };
-    }
-
-    const [kycResult, transferResult, auditResult] = await Promise.all([
-      supabase
-        .from("mock_kyc_submissions")
-        .select(KYC_COLUMNS)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("mock_payout_transfers")
-        .select(TRANSFER_COLUMNS)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("admin_audit_log")
-        .select(AUDIT_COLUMNS)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    ]);
-
-    if (kycResult.error) throw new Error(kycResult.error.message);
-    if (transferResult.error) throw new Error(transferResult.error.message);
-    if (auditResult.error) throw new Error(auditResult.error.message);
-
-    return {
-      isAdmin: true,
-      kyc: (kycResult.data ?? []) as unknown as AdminKycRow[],
-      transfers: (transferResult.data ?? []) as unknown as AdminTransferRow[],
-      audit: (auditResult.data ?? []) as unknown as AdminAuditRow[],
-    };
-  });
-
-export const reviewKycSubmission = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z
-      .object({
-        id: z.string().uuid(),
-        status: z.enum(ADMIN_KYC_STATUSES),
-        reviewNote: z.string().max(500).optional(),
-      })
-      .strict()
-      .parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId, claims } = context;
-
-    const { data: previous } = await supabase
-      .from("mock_kyc_submissions")
-      .select("status")
-      .eq("id", data.id)
-      .maybeSingle();
-
-    const { data: updated, error } = await supabase
-      .from("mock_kyc_submissions")
-      .update({
-        status: data.status,
-        review_note: data.reviewNote?.trim() ? data.reviewNote.trim() : null,
-        reviewed_by: userId,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", data.id)
-      .select(KYC_COLUMNS)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-    if (!updated) throw new Error("Submission not found or access denied.");
-
-    const row = updated as unknown as AdminKycRow;
-    await logAdminActions(
-      supabase,
-      { id: userId, email: (claims as { email?: string } | null)?.email ?? null },
-      [
-        {
-          entityType: "kyc_submission",
-          entityId: row.id,
-          entityReference: row.reference,
-          action: data.status === "approved" ? "kyc_approved" : `kyc_${data.status}`,
-          field: "status",
-          oldValue: (previous as { status?: string } | null)?.status ?? null,
-          newValue: data.status,
-          note: row.review_note,
-        },
-      ],
-    );
-
-    return row;
-  });
-
-export const updateTransferStatus = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z
-      .object({
-        id: z.string().uuid(),
-        quoteStatus: z.enum(ADMIN_QUOTE_STATUSES).optional(),
-        paymentStatus: z.enum(ADMIN_PAYMENT_STATUSES).optional(),
-        adminNote: z.string().max(500).optional(),
-      })
-      .strict()
-      .refine(
-        (value) =>
-          value.quoteStatus !== undefined ||
-          value.paymentStatus !== undefined ||
-          value.adminNote !== undefined,
-        { message: "Nothing to update." },
-      )
-      .parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId, claims } = context;
-
-    const { data: previousRow } = await supabase
-      .from("mock_payout_transfers")
-      .select("quote_status, payment_status, admin_note")
-      .eq("id", data.id)
-      .maybeSingle();
-    const previous = (previousRow ?? {}) as {
-      quote_status?: string;
-      payment_status?: string;
-      admin_note?: string | null;
-    };
-
-    const patch: {
-      updated_by: string;
-      quote_status?: QuoteStatus;
-      payment_status?: PaymentStatus;
-      admin_note?: string | null;
-      funded_at?: string;
-      settled_at?: string;
-    } = { updated_by: userId };
-    if (data.quoteStatus) patch.quote_status = data.quoteStatus;
-    if (data.paymentStatus) patch.payment_status = data.paymentStatus;
-    if (data.adminNote !== undefined) {
-      patch.admin_note = data.adminNote.trim() ? data.adminNote.trim() : null;
-    }
-    if (data.paymentStatus === "processing") patch.funded_at = new Date().toISOString();
-    if (data.paymentStatus === "paid") patch.settled_at = new Date().toISOString();
-
-    const { data: updated, error } = await supabase
-      .from("mock_payout_transfers")
-      .update(patch)
-      .eq("id", data.id)
-      .select(TRANSFER_COLUMNS)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-    if (!updated) throw new Error("Transfer not found or access denied.");
-
-    const row = updated as unknown as AdminTransferRow;
-    const entries: {
-      field: string;
-      oldValue: string | null;
-      newValue: string | null;
-      action: string;
-    }[] = [];
-    if (data.quoteStatus && data.quoteStatus !== previous.quote_status) {
-      entries.push({
-        field: "quote_status",
-        oldValue: previous.quote_status ?? null,
-        newValue: data.quoteStatus,
-        action: "quote_status_changed",
-      });
-    }
-    if (data.paymentStatus && data.paymentStatus !== previous.payment_status) {
-      entries.push({
-        field: "payment_status",
-        oldValue: previous.payment_status ?? null,
-        newValue: data.paymentStatus,
-        action: "payment_status_changed",
-      });
-    }
-    if (
-      data.adminNote !== undefined &&
-      (patch.admin_note ?? null) !== (previous.admin_note ?? null)
-    ) {
-      entries.push({
-        field: "admin_note",
-        oldValue: previous.admin_note ?? null,
-        newValue: patch.admin_note ?? null,
-        action: "note_updated",
-      });
-    }
-
-    await logAdminActions(
-      supabase,
-      { id: userId, email: (claims as { email?: string } | null)?.email ?? null },
-      entries.map((entry) => ({
-        ...entry,
-        entityType: "payout_transfer" as const,
-        entityId: row.id,
-        entityReference: row.reference,
-      })),
-    );
-
-    return row;
-  });
-
-export const getPaymentDetail = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).strict().parse(input))
-  .handler(async ({ data, context }) => {
-    const { supabase } = context;
-
-    const { data: transfer, error } = await supabase
-      .from("mock_payout_transfers")
-      .select(TRANSFER_DETAIL_COLUMNS)
-      .eq("id", data.id)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!transfer) throw new Error("Payment not found, or your account is not an admin.");
-
-    const detail = transfer as unknown as AdminTransferDetail;
-
-    const [kycResult, auditResult] = await Promise.all([
-      detail.kyc_submission_id
-        ? supabase
-            .from("mock_kyc_submissions")
-            .select(KYC_COLUMNS)
-            .eq("id", detail.kyc_submission_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-      supabase
-        .from("admin_audit_log")
-        .select(AUDIT_COLUMNS)
-        .eq("entity_id", data.id)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    if (auditResult.error) throw new Error(auditResult.error.message);
-
-    return {
-      transfer: detail,
-      kyc: (kycResult.data ?? null) as unknown as AdminKycRow | null,
-      audit: (auditResult.data ?? []) as unknown as AdminAuditRow[],
     };
   });
 

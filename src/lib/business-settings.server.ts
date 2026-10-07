@@ -21,6 +21,12 @@ import type { Json } from "@/integrations/supabase/types";
 import { toMajor, toMinor } from "@/lib/money";
 import { chargesFee, type FeeModel } from "@/lib/payments/fee-math";
 import { getPaymentLimits, limitsFromMinor } from "@/lib/payments/limits.server";
+import {
+  controlsForMode,
+  narrowLimits,
+  parseModeControls,
+  type ModeControls,
+} from "@/lib/payments/controls";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@/lib/tokens";
 import {
   checkSwapBps,
@@ -55,6 +61,11 @@ export type BusinessSettings = {
    * (limits_misconfigured) while everything else keeps working.
    */
   paymentLimits: Record<PaymentCurrency, { min: string; max: string | null } | null>;
+  /**
+   * Emergency controls and per-corridor rules for every mode, as stored
+   * (lib/payments/controls). Read the active mode's with `activeControls`.
+   */
+  paymentControls?: Json | null;
   sources: {
     conversionFeeBps: SettingSource;
     feeMin: SettingSource;
@@ -78,6 +89,8 @@ export type BusinessSettingsPatch = {
   enabledCurrencies?: PaymentCurrency[] | null;
   /** Per coin: new limits in minor units, or null to go back to .env. */
   paymentLimits?: Partial<Record<PaymentCurrency, StoredLimit | null>>;
+  /** Replace one mode's emergency controls (validated with parseModeControls). */
+  paymentControls?: { mode: AppMode; controls: unknown };
 };
 
 /** One coin's admin limits, minor units; max_minor null = no LamportPay maximum. */
@@ -92,6 +105,7 @@ type StoredRow = {
   revenue_wallet: string | null;
   enabled_currencies: string[] | null;
   payment_limits?: Partial<Record<PaymentCurrency, StoredLimit>> | null;
+  payment_controls?: Json | null;
   updated_at: string;
   updated_by: string | null;
 };
@@ -175,6 +189,7 @@ export function resolveBusinessSettings(row: StoredRow | null): BusinessSettings
     revenueWallet: revenueWallet ? checkWallet(revenueWallet, "Revenue wallet") : null,
     enabledCurrencies: parseEnabledCurrencies(currencies, "Payment coins"),
     paymentLimits,
+    paymentControls: row?.payment_controls ?? null,
     sources: {
       conversionFeeBps: conversionSource,
       feeMin: feeMinSource,
@@ -197,7 +212,7 @@ async function readRow(): Promise<StoredRow | null> {
   const { data, error } = await supabaseAdmin
     .from("business_settings")
     .select(
-      "conversion_fee_bps, platform_fee_min_minor, platform_fee_max_minor, swap_fee_bps, revenue_wallet, enabled_currencies, payment_limits, updated_at, updated_by",
+      "conversion_fee_bps, platform_fee_min_minor, platform_fee_max_minor, swap_fee_bps, revenue_wallet, enabled_currencies, payment_limits, payment_controls, updated_at, updated_by",
     )
     .eq("id", true)
     .maybeSingle();
@@ -257,6 +272,7 @@ export async function updateBusinessSettings(
     revenue_wallet: current?.revenue_wallet ?? null,
     enabled_currencies: current?.enabled_currencies ?? null,
     payment_limits: current?.payment_limits ?? null,
+    payment_controls: current?.payment_controls ?? null,
     updated_at: new Date().toISOString(),
     updated_by: actorId,
   };
@@ -281,6 +297,20 @@ export async function updateBusinessSettings(
     next.payment_limits = Object.keys(merged).length > 0 ? merged : null;
   }
 
+  if (patch.paymentControls !== undefined) {
+    const { mode, controls } = patch.paymentControls;
+    const existing =
+      next.payment_controls &&
+      typeof next.payment_controls === "object" &&
+      !Array.isArray(next.payment_controls)
+        ? (next.payment_controls as Record<string, Json>)
+        : {};
+    next.payment_controls = {
+      ...existing,
+      [mode]: parseModeControls(controls) as unknown as Json, // throws on invalid controls
+    };
+  }
+
   const after = resolveBusinessSettings(next); // throws on an invalid combination
   if (patch.paymentLimits) {
     for (const [coin, value] of Object.entries(patch.paymentLimits)) {
@@ -293,12 +323,15 @@ export async function updateBusinessSettings(
       }
     }
   }
-  const { error } = await supabaseAdmin
-    .from("business_settings")
-    .upsert(
-      { id: true, ...next, payment_limits: (next.payment_limits ?? null) as Json },
-      { onConflict: "id" },
-    );
+  const { error } = await supabaseAdmin.from("business_settings").upsert(
+    {
+      id: true,
+      ...next,
+      payment_limits: (next.payment_limits ?? null) as Json,
+      payment_controls: (next.payment_controls ?? null) as Json,
+    },
+    { onConflict: "id" },
+  );
   if (error) throw new Error(`Could not save business settings: ${error.message}`);
   clearBusinessSettingsCache();
   return { before, after };
@@ -330,4 +363,32 @@ export function feeModelLabel(
 /** Human-readable percentage of a basis-point value (200 -> "2%"). */
 export function bpsLabel(bps: number): string {
   return `${(bps / 100).toString()}%`;
+}
+
+/** The active mode's emergency controls (invalid stored controls fail closed: paused). */
+export function activeControls(
+  settings: Pick<BusinessSettings, "paymentControls">,
+  mode: AppMode = currentMode().mode,
+): ModeControls {
+  return controlsForMode(settings.paymentControls ?? null, mode);
+}
+
+/**
+ * Per-coin limits for one payout currency: the effective coin limits (mode
+ * limits in TEST MODE) narrowed by that corridor's rule in the active mode.
+ */
+export function limitsForCorridor(
+  settings: Pick<BusinessSettings, "paymentLimits" | "paymentControls">,
+  currency: string,
+  mode: AppMode = currentMode().mode,
+): BusinessSettings["paymentLimits"] {
+  const rule = activeControls(settings, mode).corridors[currency.trim().toUpperCase()];
+  if (!rule) return settings.paymentLimits;
+  const out = {} as BusinessSettings["paymentLimits"];
+  for (const coin of PAYMENT_CURRENCIES) {
+    out[coin] = narrowLimits(settings.paymentLimits[coin], rule, (minor) =>
+      toMajor(BigInt(minor), coin),
+    );
+  }
+  return out;
 }

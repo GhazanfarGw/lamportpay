@@ -134,6 +134,95 @@ function UnmatchedTravelRule({ row }: { row: AdminUnmatchedTravelRule }) {
   );
 }
 
+type View =
+  | "all"
+  | "attention"
+  | "critical"
+  | "case"
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "compliance"
+  | "today";
+
+const VIEW_LABELS: Record<View, string> = {
+  all: "All payments",
+  attention: "Needs attention",
+  critical: "Critical only",
+  case: "Open case / refund",
+  pending: "Pending (before deposit)",
+  processing: "Processing at Stables",
+  completed: "Completed",
+  failed: "Failed / cancelled / expired",
+  compliance: "Compliance review",
+  today: "Today",
+};
+
+const PENDING = new Set([
+  "PAYMENT_CREATED",
+  "KYC_PENDING",
+  "KYC_APPROVED",
+  "QUOTED",
+  "CREATED",
+  "AWAITING_FUNDS_COLLECTION",
+]);
+const PROCESSING = new Set([
+  "FUNDS_COLLECTED",
+  "IN_PROGRESS",
+  "PAYMENT_SUBMITTED",
+  "PAYMENT_PROCESSED",
+]);
+const ENDED = new Set(["FAILED", "CANCELLED", "EXPIRED", "KYC_REJECTED"]);
+
+function matchesView(row: AdminStablesPaymentRow, view: View): boolean {
+  const alerts = row.attention ?? [];
+  switch (view) {
+    case "all":
+      return true;
+    case "attention":
+      return alerts.some((a) => a.severity !== "info");
+    case "critical":
+      return alerts.some((a) => a.severity === "critical");
+    case "case":
+      return Boolean(row.open_case_status) || alerts.some((a) => a.code === "ended_after_funds");
+    case "pending":
+      return PENDING.has(row.status);
+    case "processing":
+      return PROCESSING.has(row.status);
+    case "completed":
+      return row.status === "COMPLETED";
+    case "failed":
+      return ENDED.has(row.status);
+    case "compliance":
+      return row.status === "COMPLIANCE_HOLD";
+    case "today":
+      return new Date(row.created_at).toDateString() === new Date().toDateString();
+  }
+}
+
+function AttentionPill({
+  severity,
+  label,
+}: {
+  severity: "info" | "warning" | "critical";
+  label: string;
+}) {
+  const tone =
+    severity === "critical"
+      ? "border-destructive/30 bg-destructive/10 text-destructive"
+      : severity === "warning"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-border/60 bg-muted text-muted-foreground";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${tone}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Live Stables payments, with Travel Rule wallet-verification holds first. */
 export function StablesPaymentsAdmin() {
   const fetchPayments = useServerFn(getStablesPaymentsAdmin);
@@ -146,12 +235,17 @@ export function StablesPaymentsAdmin() {
   const data = query.data;
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [view, setView] = useState<View>("all");
   if (data && !data.isAdmin) return null;
 
   const statuses = [...new Set((data?.payments ?? []).map((p) => p.status))].sort();
   const needle = search.trim().toLowerCase();
+  const attentionCount = (data?.payments ?? []).filter((p) =>
+    (p.attention ?? []).some((a) => a.severity !== "info"),
+  ).length;
   const visible = (data?.payments ?? []).filter(
     (row) =>
+      matchesView(row, view) &&
       (status === "all" || row.status === status) &&
       (!needle ||
         [row.id, row.transfer_id, row.user_id, row.payer_wallet, row.destination_country]
@@ -170,6 +264,19 @@ export function StablesPaymentsAdmin() {
             onChange={(e) => setSearch(e.target.value)}
             className="h-9 w-72 max-w-full rounded-md border border-border bg-background px-3 text-sm"
           />
+          <select
+            aria-label="Filter by operations view"
+            value={view}
+            onChange={(e) => setView(e.target.value as View)}
+            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          >
+            {(Object.keys(VIEW_LABELS) as View[]).map((v) => (
+              <option key={v} value={v}>
+                {VIEW_LABELS[v]}
+                {v === "attention" && data?.isAdmin ? ` (${attentionCount})` : ""}
+              </option>
+            ))}
+          </select>
           <select
             aria-label="Filter by status"
             value={status}
@@ -279,21 +386,14 @@ export function StablesPaymentsAdmin() {
                   <div className="flex flex-wrap items-center gap-1">
                     <StatusText value={row.status} />
                     {rule && <TravelRulePill status={rule} />}
-                    {row.stuck && (
-                      <span
-                        title={
-                          row.stuck.waitingOn === "stables"
-                            ? "Our status mirrors Stables. Check what Stables reports: node scripts/stables-transfer-status.mjs <transfer_id> (sandbox), and run reconciliation."
-                            : "The transfer was created but no deposit was detected."
-                        }
-                        className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
-                      >
-                        {row.stuck.label}
-                      </span>
-                    )}
-                    {row.deposit_issue && (
-                      <span className="inline-flex items-center rounded-full border border-destructive/20 bg-destructive/10 px-2.5 py-0.5 text-[11px] font-semibold text-destructive">
-                        Deposit mismatch
+                    {(row.attention ?? [])
+                      .filter((a) => a.code !== "case_open")
+                      .map((a) => (
+                        <AttentionPill key={a.code} severity={a.severity} label={a.label} />
+                      ))}
+                    {row.open_case_status && (
+                      <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                        Case: {row.open_case_status.replace(/_/g, " ")}
                       </span>
                     )}
                   </div>

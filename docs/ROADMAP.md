@@ -31,8 +31,11 @@ audit → documentation → approval.
 - **Payouts only to the verified user's own bank account** (the account holder is the person
   who passed KYC). Earlier notes allowing third-party recipients are withdrawn.
 - **USDC only for now**; USDT is switched off.
-- **Limits apply to what the user sends** (decision 2 Oct 2026): minimum 100 means sending 100
-  is allowed (2.00 fee, 98.00 converted). Previously the minimum applied to the converted amount
+- **Minimum 15 USDC per payment, LIVE and TEST** (owner decision 7 Oct 2026, following Stables'
+  answer #5: "Minimums are 15 USD equivalent, below this transactions risk failure"). Replaces
+  the earlier minimum of 100 (LIVE) and 1 (TEST). TEST MODE maximum stays 5,000.
+- **Limits apply to what the user sends** (decision 2 Oct 2026): with the old minimum of 100,
+  sending 100 was allowed (2.00 fee, 98.00 converted). Previously the minimum applied to the converted amount
   (you had to send 102.05).
 - KYC is Stables-hosted. Revenue in USDC to the company hardware wallet (address pending).
 - Real-money test and leaked-password protection: handled by the owner.
@@ -86,6 +89,17 @@ Design: `docs/identity/wallet-first-identity.md`. Manual tests: `docs/testing/ma
 | C65 | Webhooks in sandbox: Stables' message log shows only `transfer.created` (no `status_transitioned`, even for completed transfers); the dashboard endpoint points at an expired tunnel | Reconciliation required on DEV; production behaviour **needs Stables confirmation** (E1) | runbook "Sandbox transfer status and webhooks" |
 | C67 | Payments only progressed after `npm run reconcile` (no status refresh from Stables in the running app); journey rail stayed on "Approve in your wallet" after detection | Fixed (dev): live status sync on every payment view (throttled 8 s), immediate sync after simulated deposits, admin lists poll, rail moves to Processing | `syncPaymentWithStables`; `tests/payments-service.unit.test.ts` "live status sync", `tests/dapp-step.unit.test.ts` |
 | C69 | Stables sandbox payout matrix (19 currencies through /pay, admin-simulated deposits, automatic live sync) | Done (dev): GBP/INR/PHP/USD COMPLETED; 14 corridors IN_PROGRESS at Stables; AUD no route; LamportPay matched Stables 18/18 | `docs/testing/stables-sandbox-matrix-2026-10-03.md`; tracker tab "Sandbox Matrix"; Stables Questions P13–P19 |
+| C70 | Stables answers (shared Questions sheet, recorded 7 Oct 2026) applied: minimum 15 USDC per payment in LIVE and TEST (`DEFAULT_MIN`, `TEST_MODE_LIMITS`, `.env`); no other code change needed (AUD already in the corridor list; refunds/held funds are manual with Stables ops; integrator fee not available and its workaround is custodial, so not adopted) | Done (dev, unit tests) | `limits.server.ts`, `app-mode.ts`; `docs/testing/stables-sandbox-matrix-2026-10-03.md` "Stables answers" |
+| C71 | Pre-LIVE audit against the 26-point readiness checklist (A–J report, live readiness 50/100) | Done (docs) | `docs/production-readiness-2026-10-07.md`, `docs/security/pre-live-security-checklist.md`, `docs/testing/production-readiness-test-matrix.md` |
+| C72 | Operations alerts (wrong deposit, ended after funds, compliance hold, Stables 2 h/24 h, webhook error, abandoned quote) + admin list views/filters | Done (dev, unit) | `src/lib/payments/attention.ts`, `StablesPaymentsAdmin.tsx`; `tests/attention.unit.test.ts` |
+| C73 | Operations cases: manual refund/return workflow next to the payment (never changes payment status), Recheck Stables button | Done (dev DB migration applied, unit); UI needs a manual check | `20261007100000_payment_cases.sql`, `payment-cases.functions.ts`, `PaymentCasePanel.tsx`; `tests/payment-cases.unit.test.ts` |
+| C74 | Removed legacy admin functions writing to `mock_*` demo tables (manual KYC/payment status changes) | Done (dev) | `src/lib/admin.functions.ts` |
+| C75 | Open before LIVE: schedule reconciliation, `npm audit fix`, platform rate limiter, idempotency on create, security headers, emergency pause + corridor switches, CSV export, notifications | Open | `docs/production-readiness-2026-10-07.md` §C, §I |
+| C76 | Platform-wide rate limiting (Postgres counter shared by all instances; per-user limits on payment/KYC routes; webhook per-IP + 256 KB cap) | Done (dev, unit) | `rate-limit.server.ts`, `http.server.ts`, `20261007120000_payment_controls_rate_limits.sql`; `tests/rate-limit-shared.unit.test.ts` |
+| C77 | Emergency controls per mode: global pause, currency pause, per-corridor limits; server-enforced, audited | Done (dev, unit) | `controls.ts`, `business-settings.server.ts`, `assertPaymentsOpen`, `PaymentControlsAdmin.tsx`; `tests/payment-controls.unit.test.ts`, service tests |
+| C78 | 5-minute background reconciliation via Supabase pg_cron + pg_net (Vercel Hobby cron is daily only) | Installed on dev, inert until Vault secrets are set per environment | `20261007130000_reconcile_scheduler.sql`, `docs/architecture/operations-and-recovery.md` §2 |
+| C79 | Security headers on every response; grant hardening; `npm audit fix` (critical → 0) | Done (dev) | `security-headers.ts`, `server.ts`, `20261007140000_privilege_hardening.sql` |
+| C80 | Admin CSV export (31 days, formula-safe) and daily reconciliation report | Done (dev, unit) | `admin-reports.functions.ts`, `csv.ts`, `PaymentReportsAdmin.tsx` |
 
 Open for this workstream: account linking for existing email customers (owner decision),
 Stables KYC expiry/refresh semantics and email requirement (Stables), marketing links that still

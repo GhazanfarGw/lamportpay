@@ -38,11 +38,11 @@ export type ModeProfile = {
 };
 
 /**
- * TEST MODE limits: 1–5,000 USDC sent per payment (owner decisions 3 Oct 2026:
- * max 10, raised to 5,000). Enforced on the server like the live limits; LIVE
- * limits are unchanged.
+ * TEST MODE limits: 15–5,000 USDC sent per payment (owner decisions 3 Oct 2026:
+ * max 10, raised to 5,000; 7 Oct 2026: minimum 15, Stables' stated 15 USD
+ * minimum). Enforced on the server like the live limits.
  */
-export const TEST_MODE_LIMITS = { min: "1", max: "5000" } as const;
+export const TEST_MODE_LIMITS = { min: "15", max: "5000" } as const;
 
 export const MODE_PROFILES: Record<AppMode, ModeProfile> = {
   test: {

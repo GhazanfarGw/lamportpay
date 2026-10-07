@@ -97,7 +97,13 @@ import {
   pricingSnapshot,
   receivedFeeEntry,
 } from "./fee-ledger.server";
-import { feeModelOf, getBusinessSettings } from "@/lib/business-settings.server";
+import {
+  activeControls,
+  feeModelOf,
+  getBusinessSettings,
+  limitsForCorridor,
+} from "@/lib/business-settings.server";
+import { pauseRefusal } from "@/lib/payments/controls";
 
 export { PaymentError, type FieldIssue };
 
@@ -304,11 +310,49 @@ function minorOrNull(amount: string | undefined | null, currency: string): numbe
 
 // ------------------------------------------------------------------- limits
 
-async function paymentLimits(currency: PaymentCurrency): Promise<PaymentLimits> {
+/**
+ * Emergency controls (admin, per mode): refuse a new payment step while payments
+ * are paused globally or for this payout currency. `globalOnly` for steps that
+ * do not depend on the corridor (the funding transaction). Server-enforced; an
+ * unreadable setting refuses too.
+ */
+export async function assertPaymentsOpen(
+  payoutCurrency: string | null,
+  options: { globalOnly?: boolean; paymentId?: string } = {},
+): Promise<void> {
+  let settings;
+  try {
+    settings = await getBusinessSettings();
+  } catch {
+    throw new PaymentError("Payments are temporarily unavailable.", 503, "settings_unavailable");
+  }
+  const refusal = pauseRefusal(
+    activeControls(settings),
+    options.globalOnly ? null : payoutCurrency,
+  );
+  if (!refusal) return;
+  console.warn(
+    JSON.stringify({
+      event: "payment_refused_paused",
+      code: refusal.code,
+      payout_currency: payoutCurrency,
+      payment_id: options.paymentId ?? null,
+    }),
+  );
+  throw new PaymentError(refusal.message, refusal.status, refusal.code);
+}
+
+async function paymentLimits(
+  currency: PaymentCurrency,
+  payoutCurrency: string | null = null,
+): Promise<PaymentLimits> {
   try {
     // Admin-set limits (C07) win over .env; invalid settings pause payments.
+    // A corridor rule (emergency controls) can only narrow them.
     const settings = await getBusinessSettings();
-    const configured = settings.paymentLimits[currency];
+    const configured = (
+      payoutCurrency ? limitsForCorridor(settings, payoutCurrency) : settings.paymentLimits
+    )[currency];
     if (!configured) throw new Error(`${currency} limits are misconfigured.`);
     return limitsFromMajor(configured, currency);
   } catch (e) {
@@ -317,8 +361,12 @@ async function paymentLimits(currency: PaymentCurrency): Promise<PaymentLimits> 
   }
 }
 
-async function checkLimits(amountMinor: bigint, currency: PaymentCurrency) {
-  const limits = await paymentLimits(currency);
+async function checkLimits(
+  amountMinor: bigint,
+  currency: PaymentCurrency,
+  payoutCurrency: string | null = null,
+) {
+  const limits = await paymentLimits(currency, payoutCurrency);
   if (outsideLimits(amountMinor, limits)) {
     throw new PaymentError(limitsMessage(limits, label(currency)), 400, "amount_out_of_range");
   }
@@ -676,6 +724,7 @@ export async function createPayment(
     throw new PaymentError("Invalid wallet address.", 400, "invalid_wallet");
   }
   assertLinkedWallet(user, wallet);
+  await assertPaymentsOpen(currency);
 
   let amountMinor: bigint;
   try {
@@ -1026,12 +1075,14 @@ export async function quotePayment(
   if (!allowed.includes(ledger.paymentState(payment))) {
     throw new PaymentError(`A quote is not possible while the payment is ${payment.status}.`, 409);
   }
+  await assertPaymentsOpen(payment.destination_currency, { paymentId: payment.id });
   // Limits may have been lowered since the payment was created. They apply to
   // what the user sends: the converted amount plus LamportPay's fee.
   const sourceCurrency = currencyOf(payment);
   await checkLimits(
     BigInt(payment.source_amount_minor) + BigInt(payment.platform_fee_minor ?? 0),
     sourceCurrency,
+    payment.destination_currency,
   );
   const amountText = `${groupThousands(toMajor(BigInt(payment.source_amount_minor), sourceCurrency))} ${label(sourceCurrency)}`;
 
@@ -1326,6 +1377,7 @@ export async function createPaymentTransfer(
       409,
     );
   }
+  await assertPaymentsOpen(payment.destination_currency, { paymentId: payment.id });
   if (
     !payment.quote_expires_at ||
     Date.parse(payment.quote_expires_at) - QUOTE_SAFETY_MARGIN_MS < Date.now()
@@ -1692,6 +1744,7 @@ export async function buildFundingTransaction(
 ) {
   const config = requireLiveFunding();
   let payment = await ownedPayment(user, paymentId);
+  await assertPaymentsOpen(null, { globalOnly: true, paymentId: payment.id });
   if (!FUNDABLE.includes(ledger.paymentState(payment))) {
     throw new PaymentError(`This payment cannot be funded while it is ${payment.status}.`, 409);
   }
@@ -2391,6 +2444,16 @@ export async function reconcilePayments(options: { deadline: number }): Promise<
       snapshot = outcome.snapshot;
       if (outcome.advanced) report.transfers.advanced++;
       if (outcome.settled) report.transfers.settled++;
+      console.info(
+        JSON.stringify({
+          event: "reconcile_checked",
+          payment_id: payment.id,
+          transfer_id: payment.transfer_id,
+          status_before: payment.status,
+          advanced: outcome.advanced,
+          settled: outcome.settled,
+        }),
+      );
     } catch (e) {
       report.transfers.failed++;
       console.error(`[reconcile] ${payment.id} (transfer ${payment.transfer_id}) failed`, e);
@@ -2404,5 +2467,17 @@ export async function reconcilePayments(options: { deadline: number }): Promise<
         .catch((e) => console.error(`[reconcile] could not mark ${payment.id}`, e));
     }
   }
+  await pruneRateLimits();
   return report;
+}
+
+/** Housekeeping for the shared rate limiter: drop counters older than an hour. Never throws. */
+async function pruneRateLimits(): Promise<void> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.rpc("rate_limit_prune", { p_older_than_seconds: 3600 });
+    if (error) throw new Error(error.message);
+  } catch (e) {
+    console.warn("[reconcile] rate-limit prune skipped:", e instanceof Error ? e.message : e);
+  }
 }

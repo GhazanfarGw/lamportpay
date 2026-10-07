@@ -13,7 +13,13 @@
  * Every provider number is live; nothing is estimated locally. The firm quote
  * is still taken later, after identity verification, by the payment flow.
  */
-import { feeModelOf, getBusinessSettings } from "@/lib/business-settings.server";
+import {
+  activeControls,
+  feeModelOf,
+  getBusinessSettings,
+  limitsForCorridor,
+} from "@/lib/business-settings.server";
+import { pauseRefusal } from "@/lib/payments/controls";
 import { getOrder, isJupiterConfigured, JupiterError } from "@/lib/jupiter/client.server";
 import { toMajor, toMinor } from "@/lib/money";
 import { splitTotal } from "@/lib/payments/fee-math";
@@ -93,6 +99,8 @@ export async function liveEstimate(input: {
   if (!settings.enabledCurrencies.includes(input.coin)) {
     throw new PaymentError(`${input.coin.toUpperCase()} is turned off.`, 400, "currency_disabled");
   }
+  const paused = pauseRefusal(activeControls(settings), input.currency);
+  if (paused) throw new PaymentError(paused.message, paused.status, paused.code);
   const paySol = input.payWith === "sol";
 
   // Paying in SOL: Jupiter's ExactIn quote says how much of the coin the SOL
@@ -139,7 +147,7 @@ export async function liveEstimate(input: {
       country,
       currency,
       coins: [input.coin],
-      limits: settings.paymentLimits,
+      limits: limitsForCorridor(settings, currency),
       // Limits apply to what the user sends (owner decision 2 Oct 2026).
       limitAmountMinor: totalMinor,
     }),

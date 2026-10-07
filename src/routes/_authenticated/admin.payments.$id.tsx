@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 
 import { AdminPage, ConfirmButton } from "@/components/admin/AdminShell";
+import { PaymentCasePanel } from "@/components/admin/PaymentCasePanel";
 import { PaymentReceipt } from "@/components/site/PaymentReceipt";
 import { Button } from "@/components/ui/button";
 import { formatMinor } from "@/lib/money";
@@ -96,7 +97,8 @@ function AdminStablesPaymentPage() {
                     Deposit mismatch: {p.depositIssue.received} {p.source.currency.toUpperCase()}{" "}
                     reached the deposit address, {p.depositIssue.expected} was expected (
                     {new Date(p.depositIssue.at).toLocaleString()}). The user was told not to send
-                    again. No refund flow exists; resolve it with Stables using the transfer ID.
+                    again. Open an operations case below and resolve it with Stables using the
+                    transfer ID.
                   </span>
                 </div>
               )}
@@ -125,6 +127,8 @@ function AdminStablesPaymentPage() {
                 </div>
               )}
             </section>
+
+            <PaymentCasePanel paymentId={id} onRechecked={() => void query.refetch()} />
 
             <section className="rounded-2xl border border-border/60 bg-card p-5 space-y-3">
               <h2 className="font-semibold">Fee ledger</h2>

@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { AdminPage, Panel } from "@/components/admin/AdminShell";
+import { PaymentControlsAdmin } from "@/components/admin/PaymentControlsAdmin";
 import { PaymentCoinSettings, PaymentLimitSettings } from "@/components/site/BusinessSettingsAdmin";
 
 export const Route = createFileRoute("/_authenticated/admin/settings")({
@@ -15,6 +16,7 @@ function SettingsPage() {
       crumbs={[{ label: "Settings" }]}
       description="Business configuration an admin can change. Infrastructure secrets (API keys, webhook secrets, database keys) are never shown or edited here; they live only in the server environment."
     >
+      <PaymentControlsAdmin />
       <PaymentCoinSettings />
       <Panel title="Fee and revenue wallet">
         <p className="text-sm text-muted-foreground">

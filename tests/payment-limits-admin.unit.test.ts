@@ -19,22 +19,22 @@ const KEYS = ["PAYMENT_MIN_USDC", "PAYMENT_MAX_USDC", "PAYMENT_MIN_USDT", "PAYME
 
 beforeEach(() => {
   for (const k of KEYS) delete process.env[k];
-  // The stored (LIVE) limits; TEST MODE forces its own 1–5,000 USDC (tests/app-mode.unit.test.ts).
+  // The stored (LIVE) limits; TEST MODE forces its own 15–5,000 USDC (tests/app-mode.unit.test.ts).
   vi.stubEnv("LAMPORTPAY_MODE", "live");
   clearBusinessSettingsCache();
   (supabaseAdmin as unknown as { reset: () => void }).reset();
 });
 
 describe("payment limits in business settings", () => {
-  it("defaults to .env (100 minimum, 1,000,000 maximum)", () => {
+  it("defaults to .env (15 minimum, 1,000,000 maximum)", () => {
     const s = resolveBusinessSettings(null);
-    expect(s.paymentLimits.usdc).toEqual({ min: "100", max: "1000000" });
+    expect(s.paymentLimits.usdc).toEqual({ min: "15", max: "1000000" });
     expect(s.sources.paymentLimits.usdc).toBe("env");
   });
 
   it("keeps the owner's 'no LamportPay maximum' from .env", () => {
     process.env["PAYMENT_MAX_USDC"] = "none";
-    expect(resolveBusinessSettings(null).paymentLimits.usdc).toEqual({ min: "100", max: null });
+    expect(resolveBusinessSettings(null).paymentLimits.usdc).toEqual({ min: "15", max: null });
   });
 
   it("an admin can set, and then clear, limits per coin", async () => {
@@ -45,11 +45,11 @@ describe("payment limits in business settings", () => {
     const s = await getBusinessSettings();
     expect(s.paymentLimits.usdc).toEqual({ min: "250", max: null });
     expect(s.sources.paymentLimits).toEqual({ usdc: "admin", usdt: "env" });
-    expect(s.paymentLimits.usdt).toEqual({ min: "100", max: "1000000" });
+    expect(s.paymentLimits.usdt).toEqual({ min: "15", max: "1000000" });
 
     await updateBusinessSettings({ paymentLimits: { usdc: null } }, ADMIN);
     expect((await getBusinessSettings()).paymentLimits.usdc).toEqual({
-      min: "100",
+      min: "15",
       max: "1000000",
     });
   });
@@ -72,6 +72,6 @@ describe("payment limits in business settings", () => {
     process.env["PAYMENT_MAX_USDC"] = "150";
     const s = resolveBusinessSettings(null);
     expect(s.paymentLimits.usdc).toBeNull();
-    expect(s.paymentLimits.usdt).toEqual({ min: "100", max: "1000000" });
+    expect(s.paymentLimits.usdt).toEqual({ min: "15", max: "1000000" });
   });
 });

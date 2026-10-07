@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { handleUserRequest, json } from "@/lib/payments/http.server";
+import { USER_LIMITS } from "@/lib/payments/rate-limit.server";
 import { createPayment, listPayments } from "@/lib/payments/service.server";
 import { PAYMENT_CURRENCIES } from "@/lib/tokens";
 
@@ -49,8 +50,11 @@ export const Route = createFileRoute("/api/payments/")({
       GET: ({ request }) =>
         handleUserRequest(request, undefined, async (user) => json(await listPayments(user))),
       POST: ({ request }) =>
-        handleUserRequest(request, CreatePaymentInput, async (user, body) =>
-          json(await createPayment(user, body), 201),
+        handleUserRequest(
+          request,
+          CreatePaymentInput,
+          async (user, body) => json(await createPayment(user, body), 201),
+          USER_LIMITS.createPayment,
         ),
     },
   },

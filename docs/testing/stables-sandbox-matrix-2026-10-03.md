@@ -75,3 +75,15 @@ All three are consistent with the matrix.
 > 6. Does production send `status_transitioned` webhooks for every change?
 > 7. Is `actual_payout` populated in production after `completed`?
 > Happy to share transfer IDs for any of these. Thanks!
+
+## Stables answers (recorded 7 Oct 2026, shared Questions sheet #49–55)
+
+| # | Question | Stables answer | What changed in LamportPay |
+|---|---|---|---|
+| 49 | 14 corridors stay `in_progress` in sandbox | Some downstream providers have no fully functional sandbox; test these fully in production with small payments. | Nothing in code. The 14 corridors can only be proven by the controlled real-money test (owner approval required). |
+| 50 | Production timing for those corridors | African and LATAM rails are local rails: same day unless an RFI occurs. | Nothing in code. The 2 h "stuck at Stables" admin alert stays. |
+| 51 | GBP 500 unless a multiple of 20 USDC | Not answered yet. | — |
+| 52 | AUD route | AUD is available in production. | Nothing in code: AUD is already in the corridor list; the sandbox refusal comes from Stables' "no route" answer. |
+| 53 | Per-corridor amount limits | Not answered yet (#5: minimum 15 USD; maximums by agreement). | **Minimum set to 15 USDC in LIVE and TEST** (owner decision 7 Oct 2026). |
+| 54 | Production status webhooks | Not answered yet (#1 says status changes use `transfer.updated.status_transitioned`; #3 still being checked). | Live status sync (polling) stays. |
+| 55 | `actual_payout` in production | Not answered yet. | — |

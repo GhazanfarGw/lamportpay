@@ -42,7 +42,7 @@ Change these only on the owner's instruction.
   change it). That table is not a list of supported corridors: a Stables preview quote decides
   whether a country/currency is supported, and Stables validates the bank fields
   (`POST /payment-methods/validate`). No country-specific business code.
-- **Limits: minimum 100 per payment; maximum = Stables' limits (owner decision 2026-09-29).**
+- **Limits: minimum 15 per payment (owner decision 2026-10-07, matching Stables' stated 15 USD minimum; was 100); maximum = Stables' limits (owner decision 2026-09-29).** TEST MODE: 15–5,000 USDC.
   `PAYMENT_MIN_USDC`, `PAYMENT_MAX_USDC`, `PAYMENT_MIN_USDT`, `PAYMENT_MAX_USDT`, read in
   `src/lib/payments/limits.server.ts` (defaults 100 and 1000000; `PAYMENT_MAX_*=none` = no
   LamportPay maximum, Stables' per-customer limits decide). Admins can override them per coin in
@@ -140,3 +140,12 @@ npm run reconcile  # pull transfer status from Stables, replay stored webhooks
 - 3 Oct: Pay Now is one click (the "transfer ready" card continues to the wallet approval via `autoStart`; the wallet still asks the user). Checked payout details are kept per payment in the browser tab only (sessionStorage, cleared when the transfer is created or on Edit) so returning from Stables' verification page does not ask again. Stables failures are logged with Stables' `correlation_id` (what their support asks for); request bodies are never logged.
 - 3 Oct (sandbox findings, details in `docs/stables-sandbox-runbook.md`): Stables' sandbox completes GBP transfers but leaves NGN/MXN/KES/BRL in `in_progress`; GBP transfer creation answers 500 unless the amount sent to Stables is a multiple of 20 USDC; the sandbox emits only `transfer.created` webhooks, so DEV needs `npm run reconcile`. Probes: `scripts/stables-sandbox-lifecycle-probe.mjs`, `scripts/stables-transfer-compare.mjs`, `scripts/stables-transfer-status.mjs` (sandbox only; run with `node --use-env-proxy` from the Cowork VM). After the automatic quote, "Check my wallet again" re-reads the balance only (coin and quoted amounts stay). Note: with a production Stables config `quotePayment` still requires the wallet to be ready before a firm quote.
 - 3 Oct: **live status sync** (no developer command needed). `getPaymentView` (polled every 5 s by `/pay`, also in background tabs) and the admin payment pages call `syncPaymentWithStables`: for a payment with an open transfer it reads `GET /transfers/{id}` from Stables at most once per `LIVE_SYNC_INTERVAL_MS` (8 s, claimed via `reconciled_at`) and applies the status with the reconciliation rules (forward only; event source `reconcile`, detail `trigger: live_sync`). A Stables error keeps the stored state. Simulated sandbox deposits sync immediately. Webhooks stay the primary path and the cron stays the safety net; `npm run reconcile` is a debugging tool only. The journey rail moves past "Sign" once a payment is detected.
+
+## Pre-LIVE hardening (7 Oct 2026)
+
+- Report + LIVE GO/NO-GO: `docs/production-readiness-2026-10-07.md`. Security checklist: `docs/security/pre-live-security-checklist.md`. Test matrix: `docs/testing/production-readiness-test-matrix.md`. Operations, scheduler, controls, reports: `docs/architecture/operations-and-recovery.md`.
+- Refund/compliance/manual review = **operations cases** (`payment_cases`), never payment states. Payment status only mirrors Stables.
+- Emergency controls live in `business_settings.payment_controls`, per mode; enforce with `assertPaymentsOpen` in every new payment step; corridor limits via `limitsForCorridor` (can only narrow coin limits).
+- Rate limits: `allowShared` (Postgres `rate_limit_hit`); pass a `USER_LIMITS` entry as the 4th argument of `handleUserRequest` for money-moving routes.
+- Background reconciliation: Supabase pg_cron job every 5 min calling `/api/cron/reconcile-payments` (Vault secrets `lamportpay_reconcile_url`, `lamportpay_cron_secret`); Vercel daily cron is only a backstop.
+- Supabase MCP `execute_sql`/`apply_migration` hang on destructive statements (drop/delete need a confirmation the tool cannot show); apply those by hand.
