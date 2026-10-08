@@ -175,10 +175,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </div>
 
       <header className="sticky top-0 z-40 bg-background/75 backdrop-blur-xl print:hidden">
-        <div className="max-w-[1440px] mx-auto px-4 lg:px-8 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-6">
+        <div className="max-w-[1440px] mx-auto px-4 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex min-w-0 items-center gap-6">
             <Link to="/" aria-label="LamportPay home" className="shrink-0">
-              <BrandLogo className="scale-90 origin-left" />
+              <BrandLogo className="h-6 sm:h-8 sm:scale-90 origin-left" />
             </Link>
             <nav
               className="hidden sm:flex items-center gap-1 rounded-full border border-border/60 bg-card/70 p-1"
@@ -200,7 +200,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <ModeBadge />
             <span className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/70 px-3 py-1.5 text-xs text-muted-foreground">
               <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--neon-lime)] shadow-[0_0_8px_var(--neon-lime)]" />
@@ -212,25 +212,31 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
         <div className="h-px bg-[image:var(--gradient-uv)] opacity-40" />
-        {/* Mobile tab bar */}
-        <nav className="sm:hidden flex border-b border-border/60 bg-background/80" aria-label="App">
+      </header>
+      {/* Phones: the content clears the fixed bottom tab bar (and the home indicator). */}
+      <main className="flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">{children}</main>
+      {/* Phones: an app-style bottom tab bar, in thumb reach. */}
+      <nav
+        className="sm:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/85 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] print:hidden"
+        aria-label="App"
+      >
+        <div className="flex h-16">
           {APP_NAV.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
               to={to}
-              className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] text-muted-foreground"
-              activeProps={{
-                className:
-                  "flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] text-primary font-semibold",
-              }}
+              className="group flex-1 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground [-webkit-tap-highlight-color:transparent] active:scale-95 transition-transform"
             >
-              <Icon className="w-4 h-4" />
-              {label}
+              <span className="grid place-items-center h-7 w-12 rounded-full transition-colors group-data-[status=active]:bg-primary/12 group-data-[status=active]:text-primary">
+                <Icon className="w-[18px] h-[18px]" />
+              </span>
+              <span className="group-data-[status=active]:text-primary group-data-[status=active]:font-semibold">
+                {label}
+              </span>
             </Link>
           ))}
-        </nav>
-      </header>
-      <main className="flex-1">{children}</main>
+        </div>
+      </nav>
     </div>
   );
 }
