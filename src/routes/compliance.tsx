@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SiteLayout } from "@/components/site/Layout";
-import { ShieldCheck, XCircle, CheckCircle2 } from "lucide-react";
+import { ShieldCheck, XCircle, CheckCircle2, FlaskConical } from "lucide-react";
 import { pageSeo } from "@/lib/seo";
 import { FurtherReading } from "@/components/site/blog/FurtherReading";
 
@@ -10,22 +10,53 @@ export const Route = createFileRoute("/compliance")({
       path: "/compliance",
       title: "Compliance Position | LamportPay",
       description:
-        "LamportPay is a technology platform. It does not custody funds, perform real KYC, convert to fiat, or transmit money. Licensed partners would handle regulated payout.",
+        "LamportPay is non-custodial software. It holds no funds or keys. Identity verification, screening, currency conversion and bank payouts are carried out by a licensed payout partner, to the customer's own bank account only.",
     }),
   component: Compliance,
 });
 
+const LAST_UPDATED = "7 October 2026";
+
 function Compliance() {
   const negatives = [
-    "LamportPay does not custody funds.",
-    "LamportPay does not perform real KYC.",
-    "LamportPay does not independently transmit money.",
+    "Hold customer funds, private keys or balances. Our ledger is a record only.",
+    "Collect identity documents. Verification happens on the payout partner's hosted page.",
+    "Convert currency or send bank payouts itself.",
+    "Pay out to third parties, mobile wallets, cards or cash.",
+    "Ask for a seed phrase or private key. Wallet sign-in is a message signature, never a transaction.",
+    "Claim a licence or regulatory approval of its own.",
   ];
   const positives = [
-    "LamportPay is a technology platform.",
-    "Licensed partners handle regulated payout activity.",
-    "LamportPay is evaluating regulated infrastructure partners for future fiat conversion and payout services. No agreement is in place.",
-    "Real launch requires partner approval, KYB, legal review, and corridor approval.",
+    "Provides the software: quote, checkout, wallet signing request and payment tracking.",
+    "Shows every cost before you sign: one LamportPay fee, the partner's fee and network fees as separate lines.",
+    "Pays out only to the verified customer's own bank account. The account holder name comes from the verified record and cannot be edited.",
+    "Follows the payout partner's transfer status. The partner's record is authoritative.",
+    "Keeps an append-only audit log of admin actions.",
+    "Supports USDC on Solana only, for now.",
+  ];
+  const roles: { activity: string; who: string }[] = [
+    {
+      activity: "Holding funds",
+      who: "No one at LamportPay. You send USDC from your own wallet straight to a single-use deposit address that the payout partner issues for that transfer.",
+    },
+    {
+      activity: "Identity verification (KYC)",
+      who: "Payout partner, on its hosted page. LamportPay stores only the verification status.",
+    },
+    { activity: "AML and sanctions screening", who: "Payout partner." },
+    {
+      activity: "Travel Rule",
+      who: "Payout partner. LamportPay records whether a payment needs Travel Rule information.",
+    },
+    {
+      activity: "Bank details check, currency conversion and payout",
+      who: "Payout partner.",
+    },
+    {
+      activity: "Quote, fee disclosure, checkout and status tracking",
+      who: "LamportPay.",
+    },
+    { activity: "Approving the transaction", who: "You, in your own wallet." },
   ];
   return (
     <SiteLayout>
@@ -34,14 +65,28 @@ function Compliance() {
           Compliance
         </div>
         <h1 className="mt-2 text-4xl md:text-5xl font-semibold tracking-tight">
-          A technology platform. Not a money transmitter.
+          Non-custodial software. Regulated activity sits with a licensed partner.
         </h1>
         <p className="mt-4 text-lg text-muted-foreground">
           This page is maintained by the LamportPay team to answer common security and compliance
-          questions about the demo. It is not a certification.
+          questions. It is not a certification or legal advice.
         </p>
+        <p className="mt-2 text-xs text-muted-foreground">Last updated {LAST_UPDATED}.</p>
 
-        <div className="mt-12 grid md:grid-cols-2 gap-4">
+        <div className="mt-10 rounded-2xl border border-border/60 bg-card p-6 flex items-start gap-4">
+          <FlaskConical className="w-6 h-6 text-primary shrink-0 mt-1" />
+          <div>
+            <div className="font-semibold">Current status: controlled test phase</div>
+            <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+              The app runs in test mode: Solana devnet, the payout partner's sandbox and test
+              tokens. No real funds move. Real-money payouts start only after the partner's
+              production approval of LamportPay (including KYB), legal review and approval of each
+              payout country.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 grid md:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-border/60 bg-card p-6">
             <div className="flex items-center gap-2 font-semibold mb-4">
               <XCircle className="w-5 h-5 text-destructive" /> What LamportPay does not do
@@ -68,15 +113,27 @@ function Compliance() {
           </div>
         </div>
 
+        <div className="mt-10 rounded-2xl border border-border/60 bg-card p-6">
+          <div className="font-semibold">Who does what</div>
+          <dl className="mt-4 divide-y divide-border/60 text-sm">
+            {roles.map((r) => (
+              <div key={r.activity} className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr] sm:gap-4">
+                <dt className="font-medium">{r.activity}</dt>
+                <dd className="text-muted-foreground">{r.who}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+
         <div className="mt-10 rounded-2xl bg-[image:var(--gradient-card)] border border-border/60 p-6 flex items-start gap-4">
           <ShieldCheck className="w-6 h-6 text-primary shrink-0 mt-1" />
           <div>
             <div className="font-semibold">Partner-led compliance</div>
             <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-              KYC, KYB, AML, sanctions screening, Travel Rule, FX/off-ramp, payout processing, and
-              settlement are performed by licensed regulated settlement partners — not by
-              LamportPay. This posture is intentional: it keeps the surface area of the platform
-              narrow and defensible.
+              KYC, AML, sanctions screening, Travel Rule, currency conversion, payout processing and
+              settlement are performed by a licensed payout partner, not by LamportPay. This posture
+              is intentional: it keeps the platform's surface area narrow and defensible. The
+              partner may refuse or hold a payment under its own rules.
             </p>
           </div>
         </div>
@@ -123,7 +180,7 @@ function Compliance() {
                 Licenses / regulatory approvals
               </dt>
               <dd className="mt-1 text-muted-foreground">
-                None claimed. Regulated activity is performed by licensed partners.
+                None claimed. Regulated activity is performed by the licensed payout partner.
               </dd>
             </div>
           </dl>
