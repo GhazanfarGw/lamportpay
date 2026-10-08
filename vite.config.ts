@@ -68,6 +68,25 @@ export default defineConfig(({ command, mode }) => {
         },
       },
       {
+        // Nitro adds "buffer/", "buffer/index" and "buffer/index.js" -> "node:buffer"
+        // aliases to every build, the browser one included. With the aliases below
+        // that sent buffer-polyfill.ts's own import of the real `buffer` package back
+        // to the polyfill itself: it loaded nothing, fell back to its minimal shim,
+        // and every wallet signature on Vercel failed with "writeUIntLE is not a
+        // function" (8 Oct 2026; dev has no Nitro, so localhost worked). Drop them:
+        // the server resolves Buffer from Node either way.
+        name: "lamportpay-drop-nitro-buffer-aliases",
+        enforce: "post",
+        configResolved(resolved) {
+          const nitroBufferAlias = new Set(["buffer/", "buffer/index", "buffer/index.js"]);
+          const aliases = resolved.resolve.alias as Array<{ find: string | RegExp }>;
+          for (let i = aliases.length - 1; i >= 0; i--) {
+            const find = aliases[i]!.find;
+            if (typeof find === "string" && nitroBufferAlias.has(find)) aliases.splice(i, 1);
+          }
+        },
+      },
+      {
         name: "lamportpay-node-buffer-browser-shim",
         enforce: "pre",
         resolveId(id) {
