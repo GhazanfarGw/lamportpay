@@ -122,17 +122,14 @@ function stepState(i: number, current: number, failed: boolean): RailState {
 }
 
 /**
- * The conversion journey. Desktop: a vertical rail (icons, connecting lines,
- * one-line hints). Mobile: a compact bar with the current step's name, so it
- * never takes the screen. Derived only from real state passed in.
+ * The conversion journey on wide screens: a vertical rail (icons, connecting
+ * lines, one-line hints). Phones and tablets use DappProgress instead. Derived
+ * only from real state passed in.
  */
 export function DappStepper({ current, failed = false }: { current: number; failed?: boolean }) {
-  const label = DAPP_STEPS[Math.min(current, DAPP_STEPS.length - 1)]!;
-  const done = current >= DAPP_STEPS.length;
   return (
     <nav aria-label="Conversion progress">
-      {/* Desktop rail */}
-      <ol className="hidden lg:block">
+      <ol>
         {DAPP_STEPS.map((name, i) => {
           const state = stepState(i, current, failed);
           const { icon: Icon, hint } = STEP_META[name];
@@ -198,39 +195,57 @@ export function DappStepper({ current, failed = false }: { current: number; fail
           );
         })}
       </ol>
+    </nav>
+  );
+}
 
-      {/* Mobile / tablet: compact bar */}
-      <div className="lg:hidden rounded-2xl border border-border/60 bg-card/80 backdrop-blur px-4 py-3 space-y-2">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">
-            {done ? "All steps complete" : `Step ${current + 1} of ${DAPP_STEPS.length}`}
+/**
+ * Phones and tablets: the same journey as one slim bar (current step, what it
+ * is, and seven segments), pinned under the header by DappWorkspace.
+ */
+export function DappProgress({ current, failed = false }: { current: number; failed?: boolean }) {
+  const done = current >= DAPP_STEPS.length;
+  const name = DAPP_STEPS[Math.min(current, DAPP_STEPS.length - 1)]!;
+  return (
+    <nav aria-label="Conversion progress">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="min-w-0 truncate text-sm">
+          <span className={`font-semibold ${failed ? "text-destructive" : "text-foreground"}`}>
+            {done ? "Complete" : name}
           </span>
-          <span className={`font-semibold ${failed ? "text-destructive" : "text-primary"}`}>
-            {done ? "Complete" : label}
+          <span className="ml-2 text-xs text-muted-foreground">
+            {done ? "Paid to your bank" : failed ? "Stopped here" : STEP_META[name].hint}
           </span>
-        </div>
-        <ol className="flex gap-1">
-          {DAPP_STEPS.map((name, i) => {
-            const state = stepState(i, current, failed);
-            return (
-              <li
-                key={name}
-                aria-label={name}
-                aria-current={state === "current" ? "step" : undefined}
-                className={`h-1.5 flex-1 rounded-full transition-colors ${
+        </p>
+        <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+          {done ? `${DAPP_STEPS.length}/${DAPP_STEPS.length}` : `${current + 1}/${DAPP_STEPS.length}`}
+        </span>
+      </div>
+      <ol className="mt-2 flex gap-1">
+        {DAPP_STEPS.map((step, i) => {
+          const state = stepState(i, current, failed);
+          return (
+            <li
+              key={step}
+              aria-label={`${step}: ${state}`}
+              aria-current={state === "current" ? "step" : undefined}
+              className="relative h-1 flex-1 overflow-hidden rounded-full bg-border/80"
+            >
+              <span
+                className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${
                   state === "done"
-                    ? "bg-[image:var(--gradient-hero)]"
+                    ? "w-full bg-[image:var(--gradient-hero)]"
                     : state === "current"
-                      ? "bg-primary/60 animate-pulse"
+                      ? "w-1/2 bg-primary"
                       : state === "failed"
-                        ? "bg-destructive"
-                        : "bg-border"
+                        ? "w-full bg-destructive"
+                        : "w-0"
                 }`}
               />
-            );
-          })}
-        </ol>
-      </div>
+            </li>
+          );
+        })}
+      </ol>
     </nav>
   );
 }
@@ -238,6 +253,11 @@ export function DappStepper({ current, failed = false }: { current: number; fail
 /** The stepper for an existing payment. */
 export function JourneyStepper({ payment }: { payment: PaymentView }) {
   return <DappStepper current={dappStepFor(payment)} failed={FAILED.has(payment.status)} />;
+}
+
+/** The phone / tablet progress bar for an existing payment. */
+export function JourneyProgress({ payment }: { payment: PaymentView }) {
+  return <DappProgress current={dappStepFor(payment)} failed={FAILED.has(payment.status)} />;
 }
 
 // ------------------------------------------------------------- cost summary
@@ -254,7 +274,7 @@ function Line({
   strong?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-2">
+    <div className="flex items-start justify-between gap-4 py-1.5">
       <div>
         <div className={strong ? "font-semibold" : "text-sm text-muted-foreground"}>{label}</div>
         {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
@@ -310,18 +330,18 @@ export function CostSummary({ payment: p }: { payment: PaymentView }) {
 
   return (
     <div className="rounded-2xl border border-border/60 bg-background overflow-hidden">
-      <div className="px-5 py-3 flex items-center justify-between gap-4">
-        <span className="text-sm text-muted-foreground">You send</span>
-        <span className="font-semibold tabular-nums">
-          {money(p.totalToPay.amountMinor, p.totalToPay.currency)}
-        </span>
-      </div>
-
-      <div className="px-5 py-2 border-t border-border/50">
+      <div className="px-4 py-1">
+        <Line
+          label="You send"
+          value={
+            <span className="font-semibold text-foreground">
+              {money(p.totalToPay.amountMinor, p.totalToPay.currency)}
+            </span>
+          }
+        />
         <Line
           label={lamportpayLabel}
           value={p.platformFee ? money(p.platformFee.amountMinor, p.platformFee.currency) : "None"}
-          hint="Comes out of what you send"
         />
         <Line
           label="Payout partner fee"
@@ -332,63 +352,44 @@ export function CostSummary({ payment: p }: { payment: PaymentView }) {
               <span className="text-muted-foreground">live quote</span>
             )
           }
-          hint="Deducted inside the payout (included in the rate)"
         />
         <Line label="Amount converted" value={money(p.source.amountMinor, p.source.currency)} />
         {rate && (
           <Line
-            label="Exchange rate (after partner fees)"
+            label="Rate"
             value={`1 ${p.source.currency.toUpperCase()} = ${rate} ${p.destination.currency.toUpperCase()}`}
           />
         )}
-        <p className="text-[11px] text-muted-foreground pb-1">
-          Solana network fee: a tiny amount of SOL, shown in your wallet when you approve.
-        </p>
+        <Line label="Network fee" value={<span className="text-muted-foreground">In wallet, in SOL</span>} />
       </div>
 
-      <details className="group px-5 py-2 border-t border-border/50">
-        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Fee details
-        </summary>
-        {partnerParts.map((f) => (
-          <Line
-            key={f.kind}
-            label={`Partner ${f.kind.replace(/_fee$/, "").replace(/_/g, " ")} fee`}
-            value={money(f.amountMinor, f.currency)}
-          />
-        ))}
-        {partnerParts.length === 0 && (
-          <p className="text-xs text-muted-foreground py-2">No other partner fees on this quote.</p>
-        )}
-        {swap && (
-          <Line
-            label="Swap in your wallet"
-            value={`${swap.inAmount} ${swap.inputAsset.toUpperCase()} → ${swap.actualOut ?? swap.minOut} ${swap.outputAsset.toUpperCase()}`}
-            hint={
-              <>
-                Swap price and network fee as executed on Solana
-                {swap.signature && (
-                  <>
-                    {" · "}
-                    <TxLink signature={swap.signature} />
-                  </>
-                )}
-              </>
-            }
-          />
-        )}
-      </details>
+      {(partnerParts.length > 0 || swap) && (
+        <details className="group px-4 py-2 border-t border-border/50">
+          <summary className="cursor-pointer text-xs font-medium text-primary">Fee details</summary>
+          {partnerParts.map((f) => (
+            <Line
+              key={f.kind}
+              label={`Partner ${f.kind.replace(/_fee$/, "").replace(/_/g, " ")} fee`}
+              value={money(f.amountMinor, f.currency)}
+            />
+          ))}
+          {swap && (
+            <Line
+              label="Swap in your wallet"
+              value={`${swap.inAmount} ${swap.inputAsset.toUpperCase()} → ${swap.actualOut ?? swap.minOut} ${swap.outputAsset.toUpperCase()}`}
+              hint={swap.signature ? <TxLink signature={swap.signature} /> : undefined}
+            />
+          )}
+        </details>
+      )}
 
-      <div className="px-5 py-4 border-t border-dashed border-border/80 bg-[linear-gradient(135deg,oklch(0.62_0.28_295/0.08),oklch(0.82_0.18_200/0.08))]">
-        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          {receives.label}
-        </div>
-        <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums text-uv">
+      <div className="px-4 py-3.5 border-t border-dashed border-border/80 bg-[linear-gradient(135deg,oklch(0.62_0.28_295/0.08),oklch(0.82_0.18_200/0.08))]">
+        <div className="text-xs font-medium text-muted-foreground">{receives.label}</div>
+        <div className="text-2xl font-semibold tracking-tight mt-0.5 tabular-nums text-uv">
           {money(receives.minor, receives.currency)}
         </div>
-        <div className="text-xs text-muted-foreground mt-1">
-          {p.destination.currency.toUpperCase()} · into your own bank account in{" "}
-          {regionName(p.destination.country)}
+        <div className="text-xs text-muted-foreground mt-0.5">
+          Your own account · {regionName(p.destination.country)}
         </div>
       </div>
     </div>
@@ -427,7 +428,6 @@ function statusSteps(p: PaymentView): TimelineStep[] {
     key: "quote",
     label: "Quote",
     state: p.quote || p.transferId ? "done" : p.status === "KYC_APPROVED" ? "current" : "pending",
-    detail: p.quote ? `Quote ${p.quote.id}` : undefined,
     at: transitionAt(p, "QUOTED"),
   });
   steps.push({
@@ -490,7 +490,6 @@ function statusSteps(p: PaymentView): TimelineStep[] {
     key: "deposit",
     label: "Deposit received by the payout partner",
     state: p.simulatedDeposit && rank(p.status) < 2 ? "done" : stepFromRank(p, 1, 2),
-    detail: p.transferId ? `Reference ${p.transferId}` : undefined,
     at: transitionAt(p, "FUNDS_COLLECTED"),
   });
   steps.push({
@@ -530,6 +529,15 @@ const DOT: Record<StepState, string> = {
   skipped: "bg-muted text-muted-foreground",
 };
 
+/** "14:05" today, "8 Oct, 14:05" on another day. */
+function when(at: string): string {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${time}`;
+}
+
 export function StatusTimeline({ payment }: { payment: PaymentView }) {
   const steps = statusSteps(payment);
   return (
@@ -554,9 +562,7 @@ export function StatusTimeline({ payment }: { payment: PaymentView }) {
             </div>
             <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2 break-all">
               {step.detail}
-              {step.at && step.state !== "pending" && (
-                <span>{new Date(step.at).toLocaleString()}</span>
-              )}
+              {step.at && step.state !== "pending" && <span>{when(step.at)}</span>}
             </div>
           </div>
         </li>

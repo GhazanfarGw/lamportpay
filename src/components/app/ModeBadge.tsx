@@ -72,9 +72,11 @@ export function ModeBadge() {
         aria-expanded={open}
         aria-label={`${indicator.label}. ${indicator.detail}`}
         onClick={() => setOpen((v) => !v)}
-        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 sm:px-3 py-1.5 text-[11px] font-extrabold tracking-wider ${TONE[indicator.tone]}`}
+        className={`inline-flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-full border px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-extrabold tracking-wider ${TONE[indicator.tone]}`}
       >
-        <Icon className={`w-3.5 h-3.5 ${indicator.tone === "loading" ? "animate-spin" : ""}`} />
+        <Icon
+          className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${indicator.tone === "loading" ? "animate-spin" : ""}`}
+        />
         {/* Phones: "TEST" / "LIVE"; the full label fits from sm up. */}
         <span className="sm:hidden">{indicator.label.replace(/ MODE$/, "")}</span>
         <span className="hidden sm:inline">{indicator.label}</span>
