@@ -95,7 +95,7 @@ Built during the Colosseum hackathon period (commits from 26 Sep 2026): the Stab
 
 ## Team
 
-Zoaib Ali (Founder & CEO) · Zaheer Muneer (Advisor) · Ghazanfar Abbas (CTO & Lead Developer) · Izzat (Marketing & Community) · Safi Ullah Adnan (Advisor, Technology & AI)
+Zoaib Ali (Founder & CEO) · Zaheer Muneer (Advisor) · Ghazanfar Abbas (CTO & Lead Developer) · Izzat (Marketing & Community) · Safi Ullah Adam (Advisor, Technology & AI)
 
 ## License
 
