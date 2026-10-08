@@ -28,22 +28,39 @@ export function DappWorkspace({
   main,
   aside,
 }: {
-  rail: ReactNode;
+  /** The journey rail. Omitted on the opening quote screen, which is converter + costs only. */
+  rail?: ReactNode;
   main: ReactNode;
   aside?: ReactNode;
 }) {
   return (
     // Phones: room at the bottom for a docked action (MobileDock), when the page has one.
-    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-5 lg:py-8 max-sm:has-[[data-mobile-dock]]:pb-40">
-      <div className="grid gap-5 lg:gap-6 lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_minmax(340px,400px)]">
-        {/* Both side panels stay in view while the centre scrolls (sticky below the
+    <div
+      className={`${rail ? "max-w-[1440px]" : "max-w-[1160px]"} mx-auto px-4 lg:px-8 py-5 lg:py-8 max-sm:has-[[data-mobile-dock]]:pb-40`}
+    >
+      <div
+        className={`grid gap-5 lg:gap-6 ${
+          rail
+            ? "lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_minmax(340px,400px)]"
+            : "lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]"
+        }`}
+      >
+        {/* Side panels stay in view while the centre scrolls (sticky below the
             64px header). A panel taller than the window scrolls on its own. */}
-        <aside className="lg:sticky lg:top-20 self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:none]">
-          {rail}
-        </aside>
+        {rail && (
+          <aside className="lg:sticky lg:top-20 self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:none]">
+            {rail}
+          </aside>
+        )}
         <section className="min-w-0 space-y-5">{main}</section>
         {aside && (
-          <aside className="min-w-0 lg:col-start-2 xl:col-start-auto xl:sticky xl:top-20 self-start xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:overscroll-contain [scrollbar-width:none] space-y-4">
+          <aside
+            className={`min-w-0 self-start [scrollbar-width:none] space-y-4 ${
+              rail
+                ? "lg:col-start-2 xl:col-start-auto xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:overscroll-contain"
+                : "lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain"
+            }`}
+          >
             {aside}
           </aside>
         )}
