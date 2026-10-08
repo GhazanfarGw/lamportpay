@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import {
   AlertCircle,
   ArrowDown,
+  ArrowLeft,
   ArrowRight,
   CheckCircle2,
   Copy,
@@ -112,7 +113,7 @@ const STATUS_LABELS: Record<string, string> = {
   PAYMENT_CREATED: "Created — verify your identity",
   KYC_PENDING: "Waiting for identity verification",
   KYC_APPROVED: "Identity verified — get a quote",
-  QUOTED: "Quoted — add your bank account",
+  QUOTED: "Quote locked — finish the steps below",
   KYC_REJECTED: "Identity verification rejected",
   CREATED: "Transfer created — send your deposit",
   AWAITING_FUNDS_COLLECTION: "Waiting for your deposit",
@@ -558,6 +559,8 @@ function ConvertForm({
   const [country, setCountry] = useState(initialCountry);
   // What the user pays with: the stablecoin itself, or SOL swapped to it by Jupiter.
   const [payWith, setPayWith] = useState<"coin" | "sol">("coin");
+  // Step 1 is the converter alone; "Get quote" slides the quote panel in (step 2).
+  const [showQuote, setShowQuote] = useState(Boolean(initialAmount && initialCountry));
   const mode = useModeStatus();
   const testMode = mode.status?.mode === "test";
 
@@ -717,9 +720,12 @@ function ConvertForm({
     partnerTotal && feeMinor !== null
       ? (Number(partnerTotal.amount) + Number(toMajor(feeMinor, coinKey))).toFixed(2)
       : null;
-  // Journey: Connect → Select (wallet connected) → Quote once the form is complete.
-  // (It said so before but stopped at Select; the live quote is the Quote step.)
-  const step = !walletKey ? 0 : ready && priced ? 2 : 1;
+  // The opening screen stays short: cost details appear once there is something to price.
+  const quoteStarted =
+    Boolean(destination) &&
+    typedMinor !== null &&
+    typedMinor > 0n &&
+    (Boolean(est) || estimate.isFetching || Boolean(refused));
 
   const tokenOptions: PickerOption[] = [
     ...coins.map((c) => ({
@@ -850,10 +856,28 @@ function ConvertForm({
     </button>
   );
 
-  const rail = (
-    <RailCard footer={<TrustList />}>
-      <DappStepper current={step} />
-    </RailCard>
+  const canQuote =
+    Boolean(destination) && typedMinor !== null && typedMinor > 0n && !belowMin && !aboveMax;
+  const quoteLabel =
+    !typedMinor || typedMinor <= 0n
+      ? "Enter an amount"
+      : !destination
+        ? "Choose where to get paid"
+        : belowMin
+          ? `Minimum ${grouped(minSendMajor ?? "0")} ${coinKey.toUpperCase()}`
+          : aboveMax
+            ? `Maximum ${grouped(maxSendMajor ?? "0")} ${coinKey.toUpperCase()}`
+            : "Get quote";
+  const quoteButton = (className: string) => (
+    <button
+      type="button"
+      onClick={() => setShowQuote(true)}
+      disabled={!canQuote}
+      className={cn(PRIMARY, className)}
+    >
+      {quoteLabel}
+      {canQuote && <ArrowRight className="w-4 h-4" />}
+    </button>
   );
 
   const main = (
@@ -863,7 +887,8 @@ function ConvertForm({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            submit();
+            if (showQuote) submit();
+            else if (canQuote) setShowQuote(true);
           }}
           className="p-4 sm:p-6 lg:p-7 space-y-3"
         >
@@ -931,7 +956,7 @@ function ConvertForm({
                 placeholder={paySol ? "0.0" : (limits?.min ?? "0")}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                className="w-full min-w-0 bg-transparent text-4xl sm:text-5xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40 tabular-nums"
+                className="w-full min-w-0 bg-transparent text-5xl sm:text-6xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40 tabular-nums"
               />
               {single ? (
                 <Picker
@@ -1051,26 +1076,52 @@ function ConvertForm({
             </div>
           </div>
 
-          {/* Tablets; phones use the action bar, xl the summary panel. */}
-          {ctaButton("hidden sm:flex xl:hidden w-full justify-center py-4 text-base mt-2")}
+          {/* Tablets; phones use the action bar, lg+ the costs panel beside the converter. */}
+          {showQuote
+            ? ctaButton("hidden sm:flex lg:hidden w-full justify-center py-4 text-base mt-2")
+            : quoteButton("hidden sm:flex w-full justify-center py-4 text-base mt-3")}
           {needsSignIn && (
-            <div className="xl:hidden">
+            <div className="lg:hidden">
               <EmailSignInHint next={emailSignInNext} />
             </div>
           )}
           {differentWallet && (
-            <div className="xl:hidden">
+            <div className="lg:hidden">
               <DifferentWalletHint />
             </div>
           )}
           {create.error && (
-            <div className="xl:hidden">
+            <div className="lg:hidden">
               <ErrorText error={create.error} />
             </div>
           )}
         </form>
       </GlowCard>
       {signedIn && <KycCard compact />}
+      <MobileDock className="sm:hidden">
+        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">You receive</span>
+          <span
+            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
+          >
+            {priced ? (
+              <>
+                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
+                <span className="font-semibold text-muted-foreground">{currency}</span>
+              </>
+            ) : estimate.isFetching ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <span className="text-muted-foreground">
+                {destination ? "Enter an amount" : "Choose a country"}
+              </span>
+            )}
+          </span>
+        </div>
+        {showQuote
+          ? ctaButton("flex w-full justify-center py-3.5 text-base")
+          : quoteButton("flex w-full justify-center py-3.5 text-base")}
+      </MobileDock>
     </>
   );
 
@@ -1148,127 +1199,135 @@ function ConvertForm({
             </div>
           </div>
 
-          {/* Costs: one merged fee line, details always shown underneath */}
-          <div className="rounded-2xl border border-border/60 bg-background/60 text-sm divide-y divide-border/50">
-            <div className="flex justify-between gap-3 px-4 py-2.5">
-              <span className="text-muted-foreground">
-                {paySol ? "Leaves your wallet" : "You send"}
-              </span>
-              <span className="tabular-nums font-medium">
-                {paySol
-                  ? typedMinor !== null && typedMinor > 0n
-                    ? `${formatMinor(typedMinor, "sol")} SOL`
-                    : "—"
-                  : totalMinor !== null
-                    ? `${formatMinor(totalMinor, coinKey)} ${coinKey.toUpperCase()}`
-                    : "—"}
-              </span>
-            </div>
-            <div className="px-4 py-2.5">
-              <div className="flex justify-between gap-3">
-                <span className="font-medium">LamportPay + payout partner fees</span>
-                <span className="tabular-nums font-semibold whitespace-nowrap">
-                  {mergedFee !== null ? (
-                    `−${mergedFee} USD`
-                  ) : estimate.isLoading ? (
-                    <Skeleton className="h-3.5 w-16" />
-                  ) : (
-                    <span className="text-muted-foreground font-normal">live quote</span>
-                  )}
+          {/* Costs: one merged fee line, details underneath. Before an amount and a
+              destination there is nothing to price, so the panel stays short. */}
+          {!quoteStarted ? (
+            <p className="rounded-2xl border border-dashed border-border/70 px-4 py-3 text-xs text-muted-foreground">
+              Enter an amount and choose a country: the live rate, the LamportPay fee, the payout
+              partner&apos;s fee and the exact amount your bank receives appear here.
+            </p>
+          ) : (
+            <div className="rounded-2xl border border-border/60 bg-background/60 text-sm divide-y divide-border/50">
+              <div className="flex justify-between gap-3 px-4 py-2.5">
+                <span className="text-muted-foreground">
+                  {paySol ? "Leaves your wallet" : "You send"}
+                </span>
+                <span className="tabular-nums font-medium">
+                  {paySol
+                    ? typedMinor !== null && typedMinor > 0n
+                      ? `${formatMinor(typedMinor, "sol")} SOL`
+                      : "—"
+                    : totalMinor !== null
+                      ? `${formatMinor(totalMinor, coinKey)} ${coinKey.toUpperCase()}`
+                      : "—"}
                 </span>
               </div>
-              <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted-foreground">
-                {paySol && totalMinor !== null && (
-                  <li className="flex justify-between gap-3">
-                    <span>{coinKey.toUpperCase()} from the swap (you send)</span>
-                    <span className="tabular-nums">
-                      {formatMinor(totalMinor, coinKey)} {coinKey.toUpperCase()}
-                    </span>
-                  </li>
-                )}
-                <li className="flex justify-between gap-3">
-                  <span>LamportPay service fee</span>
-                  <span className="tabular-nums">
-                    {!feeOn
-                      ? "not active yet"
-                      : feeMinor !== null
-                        ? `${formatMinor(feeMinor, coinKey)} ${coinKey.toUpperCase()}`
-                        : "—"}
-                  </span>
-                </li>
-                {partnerParts.map((f) => (
-                  <li key={f.kind} className="flex justify-between gap-3">
-                    <span>{FEE_LABELS[f.kind] ?? f.kind.replace(/_/g, " ")}</span>
-                    <span className="tabular-nums">
-                      {grouped(f.amount)} {f.currency.toUpperCase()}
-                    </span>
-                  </li>
-                ))}
-                {amountMinor !== null && (
-                  <li className="flex justify-between gap-3">
-                    <span>Sent for conversion</span>
-                    <span className="tabular-nums">
-                      {formatMinor(amountMinor, coinKey)} {coinKey.toUpperCase()}
-                    </span>
-                  </li>
-                )}
-                {priced && (
-                  <li className="flex justify-between gap-3">
-                    <span title="The payout partner's quoted rate: what you receive divided by the amount sent for conversion, with its fees already taken out.">
-                      Effective rate, after partner fees
-                    </span>
-                    <span className="tabular-nums">
-                      1 {coinKey.toUpperCase()} = {Number(priced.rate.toPrecision(6))} {currency}
-                    </span>
-                  </li>
-                )}
-              </ul>
-            </div>
-            <div className="px-4 py-2.5">
-              <div className="flex justify-between gap-3">
-                <span className={paySol ? "font-medium" : "text-muted-foreground"}>
-                  {paySol ? "Jupiter swap" : "Swap (only if paying in SOL)"}
-                </span>
-                <span className="tabular-nums">
-                  {est?.sol?.status === "quoted" ? (
-                    paySol ? (
-                      `${grouped(est.sol.solIn)} SOL → ${grouped(est.sol.coinOut)} ${coinKey.toUpperCase()}`
+              <div className="px-4 py-2.5">
+                <div className="flex justify-between gap-3">
+                  <span className="font-medium">LamportPay + payout partner fees</span>
+                  <span className="tabular-nums font-semibold whitespace-nowrap">
+                    {mergedFee !== null ? (
+                      `−${mergedFee} USD`
+                    ) : estimate.isLoading ? (
+                      <Skeleton className="h-3.5 w-16" />
                     ) : (
-                      `≈ ${grouped(Number(est.sol.solIn).toFixed(4))} SOL`
-                    )
-                  ) : est?.sol?.status === "unavailable" ? (
-                    <span className="text-muted-foreground">{est.sol.reason}</span>
-                  ) : estimate.isFetching && !est ? (
-                    <Skeleton className="h-3.5 w-16" />
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </span>
-              </div>
-              {est?.sol?.status === "quoted" && (
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  Jupiter fee{" "}
-                  {est.sol.jupiterFeeBps !== null
-                    ? `${est.sol.jupiterFeeBps / 100}%${est.sol.jupiterFeeMint ? ` (in ${est.sol.jupiterFeeMint.toUpperCase()})` : ""}`
-                    : "n/a"}{" "}
-                  · price impact{" "}
-                  {est.sol.priceImpactPct !== null
-                    ? `${(Math.abs(est.sol.priceImpactPct) * 100).toFixed(3)}%`
-                    : "n/a"}
-                  {est.sol.routeLabels.length > 0 && ` · via ${est.sol.routeLabels.join(", ")}`}
-                  {testMode && (
-                    <div className="mt-0.5">
-                      Live mainnet price (read-only). Jupiter has no devnet, so TEST MODE can't run
-                      the swap itself.
-                    </div>
-                  )}
+                      <span className="text-muted-foreground font-normal">live quote</span>
+                    )}
+                  </span>
                 </div>
-              )}
+                <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted-foreground">
+                  {paySol && totalMinor !== null && (
+                    <li className="flex justify-between gap-3">
+                      <span>{coinKey.toUpperCase()} from the swap (you send)</span>
+                      <span className="tabular-nums">
+                        {formatMinor(totalMinor, coinKey)} {coinKey.toUpperCase()}
+                      </span>
+                    </li>
+                  )}
+                  <li className="flex justify-between gap-3">
+                    <span>LamportPay service fee</span>
+                    <span className="tabular-nums">
+                      {!feeOn
+                        ? "not active yet"
+                        : feeMinor !== null
+                          ? `${formatMinor(feeMinor, coinKey)} ${coinKey.toUpperCase()}`
+                          : "—"}
+                    </span>
+                  </li>
+                  {partnerParts.map((f) => (
+                    <li key={f.kind} className="flex justify-between gap-3">
+                      <span>{FEE_LABELS[f.kind] ?? f.kind.replace(/_/g, " ")}</span>
+                      <span className="tabular-nums">
+                        {grouped(f.amount)} {f.currency.toUpperCase()}
+                      </span>
+                    </li>
+                  ))}
+                  {amountMinor !== null && (
+                    <li className="flex justify-between gap-3">
+                      <span>Sent for conversion</span>
+                      <span className="tabular-nums">
+                        {formatMinor(amountMinor, coinKey)} {coinKey.toUpperCase()}
+                      </span>
+                    </li>
+                  )}
+                  {priced && (
+                    <li className="flex justify-between gap-3">
+                      <span title="The payout partner's quoted rate: what you receive divided by the amount sent for conversion, with its fees already taken out.">
+                        Effective rate, after partner fees
+                      </span>
+                      <span className="tabular-nums">
+                        1 {coinKey.toUpperCase()} = {Number(priced.rate.toPrecision(6))} {currency}
+                      </span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+              <div className="px-4 py-2.5">
+                <div className="flex justify-between gap-3">
+                  <span className={paySol ? "font-medium" : "text-muted-foreground"}>
+                    {paySol ? "Jupiter swap" : "Swap (only if paying in SOL)"}
+                  </span>
+                  <span className="tabular-nums">
+                    {est?.sol?.status === "quoted" ? (
+                      paySol ? (
+                        `${grouped(est.sol.solIn)} SOL → ${grouped(est.sol.coinOut)} ${coinKey.toUpperCase()}`
+                      ) : (
+                        `≈ ${grouped(Number(est.sol.solIn).toFixed(4))} SOL`
+                      )
+                    ) : est?.sol?.status === "unavailable" ? (
+                      <span className="text-muted-foreground">{est.sol.reason}</span>
+                    ) : estimate.isFetching && !est ? (
+                      <Skeleton className="h-3.5 w-16" />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </span>
+                </div>
+                {est?.sol?.status === "quoted" && (
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    Jupiter fee{" "}
+                    {est.sol.jupiterFeeBps !== null
+                      ? `${est.sol.jupiterFeeBps / 100}%${est.sol.jupiterFeeMint ? ` (in ${est.sol.jupiterFeeMint.toUpperCase()})` : ""}`
+                      : "n/a"}{" "}
+                    · price impact{" "}
+                    {est.sol.priceImpactPct !== null
+                      ? `${(Math.abs(est.sol.priceImpactPct) * 100).toFixed(3)}%`
+                      : "n/a"}
+                    {est.sol.routeLabels.length > 0 && ` · via ${est.sol.routeLabels.join(", ")}`}
+                    {testMode && (
+                      <div className="mt-0.5">
+                        Live mainnet price (read-only). Jupiter has no devnet, so TEST MODE can't
+                        run the swap itself.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="px-4 py-2 text-[11px] text-muted-foreground">
+                Solana network fee: a tiny amount of SOL, shown when you sign.
+              </div>
             </div>
-            <div className="px-4 py-2 text-[11px] text-muted-foreground">
-              Solana network fee: a tiny amount of SOL, shown when you sign.
-            </div>
-          </div>
+          )}
           {refused && <Notice tone="warn">{refused}</Notice>}
           {estimate.error && <ErrorText error={estimate.error} />}
           {paySol && testMode && (
@@ -1277,53 +1336,53 @@ function ConvertForm({
               has no devnet). Your payment continues in test USDC and no SOL is spent.
             </Notice>
           )}
-          {ctaButton("hidden xl:flex w-full justify-center py-3.5 text-base")}
+          {ctaButton("hidden lg:flex w-full justify-center py-3.5 text-base")}
           {needsSignIn && (
-            <div className="hidden xl:block">
+            <div className="hidden lg:block">
               <EmailSignInHint next={emailSignInNext} />
             </div>
           )}
           {differentWallet && (
-            <div className="hidden xl:block">
+            <div className="hidden lg:block">
               <DifferentWalletHint />
             </div>
           )}
           {create.error && (
-            <div className="hidden xl:block">
+            <div className="hidden lg:block">
               <ErrorText error={create.error} />
             </div>
           )}
         </div>
       </GlowCard>
-      <div className="lg:hidden px-1">
+      <div className="px-1">
         <TrustList />
       </div>
-      <MobileDock className="sm:hidden">
-        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
-          <span className="text-muted-foreground">You receive</span>
-          <span
-            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
-          >
-            {priced ? (
-              <>
-                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
-                <span className="font-semibold text-muted-foreground">{currency}</span>
-              </>
-            ) : estimate.isFetching ? (
-              <Skeleton className="h-4 w-24" />
-            ) : (
-              <span className="text-muted-foreground">
-                {destination ? "Enter an amount" : "Choose a country"}
-              </span>
-            )}
-          </span>
-        </div>
-        {ctaButton("flex w-full justify-center py-3.5 text-base")}
-      </MobileDock>
     </>
   );
 
-  return <DappWorkspace rail={rail} main={main} aside={aside} />;
+  return (
+    <div className="max-w-[1180px] mx-auto px-4 lg:px-8 py-5 lg:py-10 max-sm:has-[[data-mobile-dock]]:pb-40">
+      <div
+        className={`grid gap-y-5 lg:justify-center lg:transition-[grid-template-columns,column-gap] lg:duration-500 lg:ease-out ${
+          showQuote
+            ? "lg:grid-cols-[minmax(0,660px)_400px] lg:gap-x-6"
+            : "lg:grid-cols-[minmax(0,720px)_0px] lg:gap-x-0"
+        }`}
+      >
+        <section className="min-w-0 space-y-5">{main}</section>
+        <aside
+          inert={!showQuote}
+          className={`min-w-0 self-start lg:overflow-hidden transition-[opacity,transform] duration-500 ease-out ${
+            showQuote
+              ? "opacity-100 translate-x-0"
+              : "max-lg:hidden opacity-0 lg:translate-x-8 pointer-events-none"
+          }`}
+        >
+          <div className="lg:w-[400px] space-y-4">{aside}</div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function CostRow({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
@@ -1429,8 +1488,57 @@ function PaymentPanel({
     p.status,
   );
   const walletCheck = p.travelRule?.status === "required" || p.travelRule?.status === "expired";
+  // Coarse phase of the flow; the action area slides to the next phase when it
+  // changes (not on every status tick, so an open wallet approval is never reset).
+  const phase = preTransfer
+    ? "setup"
+    : p.status === "COMPLETED"
+      ? "done"
+      : p.terminal
+        ? "ended"
+        : FUNDABLE.has(p.status) && !p.testPayment && !p.funding
+          ? "pay"
+          : "processing";
   // TEST MODE: the devnet payment was detected; Stables (sandbox) now processes.
   const detected = Boolean(p.testPayment) && FUNDABLE.has(p.status);
+
+  const quoteExpired =
+    p.status === "QUOTED" &&
+    Boolean(p.quote?.expiresAt) &&
+    Date.parse(p.quote!.expiresAt!) <= Date.now();
+
+  // What has happened: secondary while the user is still setting up the payment
+  // (folded in the side panel), the main news once the transfer exists.
+  const history = (
+    <MobileCollapse
+      title="What has happened"
+      summary={STATUS_LABELS[p.status] ?? p.status}
+      enabled={preTransfer}
+    >
+      <Card>
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-semibold">What has happened</div>
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)] animate-pulse" />
+            Updates automatically
+          </span>
+        </div>
+        <StatusTimeline payment={p} />
+        {preTransfer ? (
+          <details className="group text-sm">
+            <summary className="cursor-pointer text-xs font-medium text-primary hover:underline">
+              Show event log
+            </summary>
+            <div className="mt-2">
+              <Timeline payment={p} />
+            </div>
+          </details>
+        ) : (
+          <Timeline payment={p} />
+        )}
+      </Card>
+    </MobileCollapse>
+  );
 
   const rail = (
     <RailCard
@@ -1473,6 +1581,18 @@ function PaymentPanel({
                   </span>
                 </div>
                 <div className="font-mono text-[11px] text-muted-foreground">Payment {p.id}</div>
+                {preTransfer && (
+                  <Link
+                    to="/pay"
+                    search={{
+                      amount: p.totalToPay.amount,
+                      country: p.destination.country.toUpperCase(),
+                    }}
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <ArrowLeft className="w-3 h-3" /> Change amount or country
+                  </Link>
+                )}
               </div>
             </div>
             <span
@@ -1510,16 +1630,23 @@ function PaymentPanel({
               <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 {p.actualPayout ? "You received" : "You receive"}
               </div>
-              <div className="mt-0.5 truncate text-lg font-bold tabular-nums text-uv">
+              <div
+                className={`mt-0.5 truncate text-lg font-bold tabular-nums ${quoteExpired ? "text-muted-foreground line-through" : "text-uv"}`}
+              >
                 {p.actualPayout
                   ? money(p.actualPayout.amountMinor, p.actualPayout.currency)
                   : money(p.destination.amountMinor, p.destination.currency)}
               </div>
+              {quoteExpired && (
+                <div className="text-[11px] text-destructive">
+                  Quote expired · refresh for today&apos;s rate
+                </div>
+              )}
             </div>
           </div>
 
           {p.failureReason && <Notice tone="warn">{p.failureReason}</Notice>}
-          {p.payoutEstimateMinutes !== null && !walletCheck && (
+          {p.payoutEstimateMinutes !== null && !walletCheck && !preTransfer && (
             <Notice tone="info">
               Usually reaches your bank within about{" "}
               {p.payoutEstimateMinutes >= 60 && p.payoutEstimateMinutes % 60 === 0
@@ -1529,7 +1656,7 @@ function PaymentPanel({
             </Notice>
           )}
 
-          {preTransfer && (
+          {preTransfer && (p.status !== "QUOTED" || quoteExpired) && (
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => quote.mutate()}
@@ -1548,132 +1675,137 @@ function PaymentPanel({
               )}
             </div>
           )}
+          {/* A valid quote: just its timer here; refreshing lives with Pay Now. */}
+          {p.status === "QUOTED" && !quoteExpired && p.quote?.expiresAt && (
+            <QuoteExpiry expiresAt={p.quote.expiresAt} />
+          )}
           {quote.error && <ErrorText error={quote.error} />}
         </div>
       </GlowCard>
 
-      {preTransfer &&
-        p.settlement &&
-        (p.settlement.kind === "funds_ready" ? (
-          // Nothing to do here: one line on phones, so the next step stays in view.
-          <MobileCollapse
-            title={`Paying with ${(p.settlement.coin ?? p.source.currency).toUpperCase()}`}
-            summary={`${SETTLEMENT_TITLES.funds_ready} · ${p.settlement.reason}`}
-          >
-            <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
-          </MobileCollapse>
-        ) : (
-          <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
-        ))}
-      {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
-      {p.status === "QUOTED" && (
-        <CheckoutFlow
-          payment={p}
-          kyc={kyc.data}
-          testMode={testMode}
-          onRefreshQuote={() => quote.mutate()}
-          refreshingQuote={quote.isPending}
-          onChanged={setPayment}
-        />
+      {/* The wallet only takes the main column when it needs the user (swap,
+          top-up, connect); when it is ready it is a compact card in the side panel. */}
+      {preTransfer && p.settlement && p.settlement.kind !== "funds_ready" && (
+        <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
       )}
-      {/* TEST MODE: the transfer exists but the payment wasn't made yet (e.g. a
+      <div key={phase} className="space-y-5 animate-in fade-in slide-in-from-right-6 duration-300">
+        {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
+        {p.status === "QUOTED" && (
+          <CheckoutFlow
+            payment={p}
+            kyc={kyc.data}
+            testMode={testMode}
+            onRefreshQuote={() => quote.mutate()}
+            refreshingQuote={quote.isPending}
+            onChanged={setPayment}
+          />
+        )}
+        {/* TEST MODE: the transfer exists but the payment wasn't made yet (e.g. a
           rejected wallet approval or a reload): Pay Now again, same payment. */}
-      {testMode && p.transferId && FUNDABLE.has(p.status) && !p.testPayment && (
-        <Card>
-          <div className="font-semibold">Pay now</div>
-          <p className="text-sm text-muted-foreground">
-            Your transfer is ready. Approve the payment in your wallet to continue.
-          </p>
-          <MobileDock>
-            <TestPayIsland
-              paymentId={p.id}
-              expectedWallet={p.settlement?.wallet ?? null}
-              autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
-              onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
-              label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
-              onPaid={setPayment}
-            />
-          </MobileDock>
-        </Card>
-      )}
-      {p.testPayment && (
-        <Card>
-          <div className="flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
-            Payment detected on Solana devnet
-          </div>
-          <p className="text-sm text-muted-foreground">
-            TEST MODE: your wallet signed a devnet transaction for this payment (no funds moved),
-            and the payout partner's sandbox received the simulated deposit. The status above
-            follows the payout partner.
-          </p>
-          <a
-            href={p.testPayment.explorerUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-          >
-            View transaction <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </Card>
-      )}
-      {!testMode && p.deposit && FUNDABLE.has(p.status) && !p.funding && (
-        <DepositCard payment={p} onFunded={() => void payment.refetch()} />
-      )}
-      {p.status === "COMPLETED" && (
-        <div className="rounded-3xl p-px bg-[image:var(--gradient-hero)] shadow-[var(--shadow-elegant)]">
-          <div className="rounded-[23px] bg-card p-6 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="grid place-items-center w-10 h-10 rounded-full bg-[color:var(--success)]/15">
-                <CheckCircle2 className="w-6 h-6 text-[color:var(--success)]" />
+        {testMode && p.transferId && FUNDABLE.has(p.status) && !p.testPayment && (
+          <Card>
+            <div className="font-semibold">Pay now</div>
+            <p className="text-sm text-muted-foreground">
+              Your transfer is ready. Approve the payment in your wallet to continue.
+            </p>
+            <MobileDock>
+              <TestPayIsland
+                paymentId={p.id}
+                expectedWallet={p.settlement?.wallet ?? null}
+                autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
+                onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
+                label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
+                onPaid={setPayment}
+              />
+            </MobileDock>
+          </Card>
+        )}
+        {p.testPayment && (
+          <Card>
+            <div className="flex items-center gap-2 font-semibold">
+              <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
+              Payment detected on Solana devnet
+              <span className="rounded-full bg-[color:var(--warning)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--warning)]">
+                Devnet · partner sandbox
               </span>
-              <div>
-                <div className="font-semibold">Paid into your bank account</div>
-                <div className="text-xs text-muted-foreground">
-                  Your receipt has the amounts, fees and on-chain links.
+            </div>
+            <p className="text-sm text-muted-foreground">
+              TEST MODE: your wallet signed a devnet transaction for this payment (no funds moved),
+              and the payout partner's sandbox received the simulated deposit. The status above
+              follows the payout partner.
+            </p>
+            <a
+              href={p.testPayment.explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              View transaction <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </Card>
+        )}
+        {!testMode && p.deposit && FUNDABLE.has(p.status) && !p.funding && (
+          <DepositCard payment={p} onFunded={() => void payment.refetch()} />
+        )}
+        {p.status === "COMPLETED" && (
+          <div className="rounded-3xl p-px bg-[image:var(--gradient-hero)] shadow-[var(--shadow-elegant)]">
+            <div className="rounded-[23px] bg-card p-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="grid place-items-center w-10 h-10 rounded-full bg-[color:var(--success)]/15">
+                  <CheckCircle2 className="w-6 h-6 text-[color:var(--success)]" />
+                </span>
+                <div>
+                  <div className="font-semibold">Paid into your bank account</div>
+                  <div className="text-xs text-muted-foreground">
+                    Your receipt has the amounts, fees and on-chain links.
+                  </div>
                 </div>
               </div>
+              <MobileDock>
+                <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
+                  View receipt <ArrowRight className="w-4 h-4" />
+                </Link>
+              </MobileDock>
             </div>
-            <MobileDock>
-              <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
-                View receipt <ArrowRight className="w-4 h-4" />
-              </Link>
-            </MobileDock>
           </div>
-        </div>
-      )}
-      <MobileCollapse
-        title="What has happened"
-        summary={STATUS_LABELS[p.status] ?? p.status}
-        enabled={preTransfer}
-      >
-        <Card>
-          <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">What has happened</div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)] animate-pulse" />
-              Updates automatically
-            </span>
-          </div>
-          <StatusTimeline payment={p} />
-          <Timeline payment={p} />
-        </Card>
-      </MobileCollapse>
+        )}
+        {!preTransfer && history}
+      </div>
     </>
   );
 
   const aside = (
-    <MobileCollapse
-      title="Fees & costs"
-      summary={`LamportPay fee ${p.platformFee ? money(p.platformFee.amountMinor, p.platformFee.currency) : "—"} · rate ${p.exchangeRate !== null ? `1 ${p.source.currency.toUpperCase()} = ${Number(p.exchangeRate.toPrecision(6))} ${p.destination.currency.toUpperCase()}` : "—"}`}
-    >
-      <GlowCard>
-        <div className="p-4 sm:p-5 space-y-3">
-          <h2 className="text-sm font-semibold">Fees &amp; costs</h2>
-          <CostSummary payment={p} />
-        </div>
-      </GlowCard>
-    </MobileCollapse>
+    <>
+      <MobileCollapse
+        title="Fees & costs"
+        summary={`LamportPay fee ${p.platformFee ? money(p.platformFee.amountMinor, p.platformFee.currency) : "—"} · rate ${p.exchangeRate !== null ? `1 ${p.source.currency.toUpperCase()} = ${Number(p.exchangeRate.toPrecision(6))} ${p.destination.currency.toUpperCase()}` : "—"}`}
+      >
+        <GlowCard>
+          <div className="p-4 sm:p-5 space-y-3">
+            <h2 className="text-sm font-semibold">Fees &amp; costs</h2>
+            <CostSummary payment={p} />
+            {preTransfer && p.payoutEstimateMinutes !== null && (
+              <p className="text-[11px] text-muted-foreground">
+                Usually reaches your bank within about{" "}
+                {p.payoutEstimateMinutes >= 60 && p.payoutEstimateMinutes % 60 === 0
+                  ? `${p.payoutEstimateMinutes / 60} hour${p.payoutEstimateMinutes === 60 ? "" : "s"}`
+                  : `${p.payoutEstimateMinutes} minutes`}{" "}
+                (estimate).
+              </p>
+            )}
+          </div>
+        </GlowCard>
+      </MobileCollapse>
+      {preTransfer && p.settlement?.kind === "funds_ready" && (
+        <MobileCollapse
+          title={`Wallet · paying with ${(p.settlement.coin ?? p.source.currency).toUpperCase()}`}
+          summary={`${SETTLEMENT_TITLES.funds_ready} · ${p.settlement.reason}`}
+        >
+          <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} compact />
+        </MobileCollapse>
+      )}
+      {preTransfer && history}
+    </>
   );
 
   return <DappWorkspace rail={rail} main={main} aside={aside} />;
@@ -1695,10 +1827,13 @@ function SettlementCard({
   payment,
   stablesMode,
   onChanged,
+  compact = false,
 }: {
   payment: PaymentView;
   stablesMode?: string;
   onChanged: (p: PaymentView) => void;
+  /** Side-panel version for a wallet that is ready: balance, status, re-check. */
+  compact?: boolean;
 }) {
   const s = payment.settlement!;
   const walletKey = useAppWallet().publicKey;
@@ -1721,6 +1856,57 @@ function SettlementCard({
     onSuccess: onChanged,
   });
   const swap = payment.latestSwap;
+  // Once the coin is fixed only its own answer matters; the other coin's row
+  // (e.g. "USDT with Stables") would read as a second, stale way to pay.
+  const candidates = canChange
+    ? s.candidates
+    : s.candidates.filter((c) => c.coin.toUpperCase() === coin);
+
+  if (compact) {
+    const held = s.holdings?.status === "ok" ? s.holdings.tokens[coin.toLowerCase()] : undefined;
+    return (
+      <GlowCard>
+        <div className="p-4 sm:p-5 space-y-3 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-semibold">Wallet</h2>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--success)]/15 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--success)]">
+              <CheckCircle2 className="w-3 h-3" /> {SETTLEMENT_TITLES[s.kind] ?? s.kind}
+            </span>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/60 divide-y divide-border/50">
+            <CostRow label="Address" value={s.wallet ? shortAddress(s.wallet) : "Not connected"} />
+            <CostRow
+              label={`${coin} balance`}
+              value={held !== undefined ? `${held} ${coin}` : "—"}
+            />
+            {s.holdings?.status === "ok" && (
+              <CostRow label="SOL for network fees" value={`${s.holdings.sol} SOL`} />
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {s.reason} No swap needed: you pay in {coin} directly. Checked{" "}
+            {new Date(s.checkedAt).toLocaleTimeString()}.
+          </p>
+          {canRecheck && (
+            <button
+              type="button"
+              onClick={() => (walletKey ? recheck.mutate() : requestWalletConnect())}
+              disabled={recheck.isPending}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:opacity-60"
+            >
+              {recheck.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              Check my wallet again
+            </button>
+          )}
+          {recheck.error && <ErrorText error={recheck.error} />}
+        </div>
+      </GlowCard>
+    );
+  }
 
   return (
     <Card>
@@ -1748,7 +1934,7 @@ function SettlementCard({
                 : "Not connected"
           }
         />
-        {s.candidates.map((c) => (
+        {candidates.map((c) => (
           <KV
             key={c.coin}
             k={`${c.coin.toUpperCase()} with Stables`}
@@ -2070,6 +2256,27 @@ function CheckoutFlow({
   };
   const liveTransfer = useMutation({ mutationFn: createTransfer });
 
+  // One step at a time: details → verify → review. A finished step leaves the
+  // screen and the next one slides in where it was (no scrolling); "Back" returns
+  // to the checked details (read-only, with Edit).
+  const [back, setBack] = useState(false);
+  const stage: keyof typeof STAGE_ORDER =
+    !checked || back ? "details" : !verified ? "verify" : "review";
+  const previousStage = useRef(stage);
+  const forward = STAGE_ORDER[stage] >= STAGE_ORDER[previousStage.current];
+  useEffect(() => {
+    previousStage.current = stage;
+  }, [stage]);
+  const backButton = (
+    <button
+      type="button"
+      onClick={() => setBack(true)}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition"
+    >
+      <ArrowLeft className="w-4 h-4" /> Back to your details
+    </button>
+  );
+
   const quoteValid =
     payment.quote?.expiresAt !== null &&
     payment.quote?.expiresAt !== undefined &&
@@ -2080,92 +2287,136 @@ function CheckoutFlow({
   const canPay = Boolean(checked) && verified && quoteValid && fundsReady;
 
   return (
-    <>
-      <PayoutDetailsStep
-        payment={payment}
-        kyc={kyc}
-        checked={checked}
-        onChecked={setChecked}
-        onEdit={() => setChecked(null)}
-      />
-      {checked && <VerificationGate kyc={kyc} />}
-      {checked && verified && (
-        <PaymentReceipt
-          payment={payment}
-          mode="summary"
-          senderName={kyc?.verifiedName ?? checked.holderName}
-          account={{
-            holderName: kyc?.verifiedName ?? checked.holderName,
-            bankName: checked.beneficiary.bankName,
-            kind: "account_number",
-            number: checked.beneficiary.accountNumber,
-          }}
-          footer={
-            <div className="space-y-3 border-t border-border/50 pt-4">
-              {payment.quote?.expiresAt && <QuoteExpiry expiresAt={payment.quote.expiresAt} />}
-              {!quoteValid && (
-                <div className="flex flex-wrap items-center gap-3">
-                  <Notice tone="warn">The quote expired. Refresh it to see today's rate.</Notice>
-                  <button
-                    type="button"
-                    onClick={onRefreshQuote}
-                    disabled={refreshingQuote}
-                    className={SECONDARY}
-                  >
-                    {refreshingQuote && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Refresh quote
-                  </button>
-                </div>
-              )}
-              <Notice tone="info">
-                {OWN_ACCOUNT_MESSAGE} Check the account number: a payout to a wrong account may not
-                be recoverable.
-              </Notice>
-              {!fundsReady && (
-                <Notice tone="warn">
-                  {payment.settlement?.reason ?? "Your wallet balance hasn't been checked yet."}{" "}
-                  {testMode
-                    ? "In TEST MODE swaps can't run: add devnet test USDC to this wallet (Circle faucet), then use “Check my wallet again”."
-                    : "Complete the step above first; Pay Now unlocks when your wallet holds the full amount."}
-                </Notice>
-              )}
-              {testMode ? (
-                <MobileDock>
-                  <TestPayIsland
-                    paymentId={payment.id}
-                    prepare={createTransfer}
-                    disabled={!canPay}
-                    expectedWallet={payment.settlement?.wallet ?? null}
-                    label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
-                    onPaid={onChanged}
-                  />
-                </MobileDock>
-              ) : (
-                <MobileDock className="space-y-3 max-sm:space-y-2">
-                  <button
-                    type="button"
-                    disabled={!canPay || liveTransfer.isPending}
-                    onClick={() => liveTransfer.mutate()}
-                    className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
-                  >
-                    {liveTransfer.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Pay now · {payment.totalToPay.amount}{" "}
-                    {payment.totalToPay.currency.toUpperCase()}
-                  </button>
-                  <p className="text-xs text-muted-foreground">
-                    Next, your wallet asks you to approve the payment. Nothing moves until you
-                    approve.
-                  </p>
-                  {liveTransfer.error && <ErrorText error={liveTransfer.error} />}
-                </MobileDock>
-              )}
-            </div>
-          }
-        />
+    <div
+      key={stage}
+      className={`space-y-4 animate-in fade-in duration-300 ${forward ? "slide-in-from-right-6" : "slide-in-from-left-6"}`}
+    >
+      {stage === "details" && (
+        <>
+          <PayoutDetailsStep
+            payment={payment}
+            kyc={kyc}
+            checked={checked}
+            onChecked={(c) => {
+              setChecked(c);
+              setBack(false);
+            }}
+            onEdit={() => {
+              setChecked(null);
+              setBack(false);
+            }}
+          />
+          {checked && (
+            <MobileDock>
+              <button
+                type="button"
+                onClick={() => setBack(false)}
+                className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
+              >
+                {verified ? "Continue to review" : "Continue to verification"}
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </MobileDock>
+          )}
+        </>
       )}
-    </>
+      {stage === "verify" && (
+        <>
+          {backButton}
+          <VerificationGate kyc={kyc} />
+        </>
+      )}
+      {stage === "review" && checked && (
+        <>
+          {backButton}
+          <PaymentReceipt
+            payment={payment}
+            mode="summary"
+            senderName={kyc?.verifiedName ?? checked.holderName}
+            account={{
+              holderName: kyc?.verifiedName ?? checked.holderName,
+              bankName: checked.beneficiary.bankName,
+              kind: "account_number",
+              number: checked.beneficiary.accountNumber,
+            }}
+            footer={
+              // Two siblings, both direct children of the summary card: the notes, then
+              // the quote timer + Pay Now strip, which stays on screen (sticky) on tablets
+              // and desktop while the summary above is read. Phones dock it instead.
+              <>
+                <div className="space-y-3 border-t border-border/50 pt-4">
+                  {!quoteValid && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Notice tone="warn">
+                        The quote expired. Refresh it to see today's rate.
+                      </Notice>
+                      <button
+                        type="button"
+                        onClick={onRefreshQuote}
+                        disabled={refreshingQuote}
+                        className={SECONDARY}
+                      >
+                        {refreshingQuote && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Refresh quote
+                      </button>
+                    </div>
+                  )}
+                  <Notice tone="info">
+                    {OWN_ACCOUNT_MESSAGE} Check the account number: a payout to a wrong account may
+                    not be recoverable.
+                  </Notice>
+                  {!fundsReady && (
+                    <Notice tone="warn">
+                      {payment.settlement?.reason ?? "Your wallet balance hasn't been checked yet."}{" "}
+                      {testMode
+                        ? "In TEST MODE swaps can't run: add devnet test USDC to this wallet (Circle faucet), then use “Check my wallet again”."
+                        : "Complete the step above first; Pay Now unlocks when your wallet holds the full amount."}
+                    </Notice>
+                  )}
+                </div>
+                <div className="sm:sticky sm:bottom-4 sm:z-20 sm:-mx-2 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-card/95 sm:p-3 sm:shadow-[var(--shadow-elegant)] sm:backdrop-blur-xl space-y-2">
+                  {payment.quote?.expiresAt && <QuoteExpiry expiresAt={payment.quote.expiresAt} />}
+                  {testMode ? (
+                    <MobileDock>
+                      <TestPayIsland
+                        paymentId={payment.id}
+                        prepare={createTransfer}
+                        disabled={!canPay}
+                        expectedWallet={payment.settlement?.wallet ?? null}
+                        label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
+                        onPaid={onChanged}
+                      />
+                    </MobileDock>
+                  ) : (
+                    <MobileDock className="space-y-3 max-sm:space-y-2">
+                      <button
+                        type="button"
+                        disabled={!canPay || liveTransfer.isPending}
+                        onClick={() => liveTransfer.mutate()}
+                        className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
+                      >
+                        {liveTransfer.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Pay now · {payment.totalToPay.amount}{" "}
+                        {payment.totalToPay.currency.toUpperCase()}
+                      </button>
+                      <p className="text-xs text-muted-foreground">
+                        Next, your wallet asks you to approve the payment. Nothing moves until you
+                        approve.
+                      </p>
+                      {liveTransfer.error && <ErrorText error={liveTransfer.error} />}
+                    </MobileDock>
+                  )}
+                </div>
+              </>
+            }
+          />
+        </>
+      )}
+    </div>
   );
 }
+
+const STAGE_ORDER = { details: 0, verify: 1, review: 2 } as const;
 
 /** One step for personal + payout details; only what Stables needs for this currency. */
 function PayoutDetailsStep({
@@ -2315,6 +2566,12 @@ function PayoutDetailsStep({
           {checked.beneficiary.bankName} · ••••
           {checked.beneficiary.accountNumber.slice(-4)} · {countryName(payment.destination.country)}
         </p>
+        {kyc?.state === "kyc_verified" && (
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <ShieldCheck className="w-4 h-4 text-[color:var(--success)]" />
+            Identity verified{kyc.verifiedName ? ` as ${kyc.verifiedName}` : ""}
+          </p>
+        )}
       </Card>
     );
   }
@@ -2818,7 +3075,7 @@ function Notice({
 }: {
   tone: "info" | "warn";
   children: ReactNode;
-  /** Phones: show two lines and a "More" toggle, so long notes don't push the form down. */
+  /** Two lines and a "More" toggle, so long notes don't push the current step down. */
   collapsible?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -2834,14 +3091,12 @@ function Notice({
         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === "warn" ? "text-destructive" : "text-primary"}`}
       />
       <span className="min-w-0">
-        <span className={collapsible && !expanded ? "max-sm:line-clamp-2" : undefined}>
-          {children}
-        </span>
+        <span className={collapsible && !expanded ? "line-clamp-2" : undefined}>{children}</span>
         {collapsible && (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="sm:hidden mt-1 text-xs font-semibold text-primary"
+            className="mt-1 text-xs font-semibold text-primary"
           >
             {expanded ? "Less" : "More"}
           </button>

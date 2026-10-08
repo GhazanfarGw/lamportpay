@@ -117,11 +117,15 @@ npm run reconcile  # pull transfer status from Stables, replay stored webhooks
 - **Admin audit log is append-only in the database** (C06): UPDATE/DELETE/TRUNCATE refused by
   triggers, `created_at` stamped by the database; only the auth FK may null `actor_id`.
 - **CI** (C08): `.github/workflows/ci.yml` runs repo secret check, typecheck, `lint:ci`,
-  `test:unit`, build, client-bundle secret scan and `npm audit --audit-level=high`.
+  `test:unit`, build, client-bundle secret scan and the production dependency audit
+  (`scripts/check-audit.mjs`: fails on high/critical advisories except those listed in its `ACCEPTED`).
   Formatting (`prettier`) is not enforced yet (C32).
 - **Dependencies** (C09): `uuid` forced to ^11.1.1 via `overrides`. Remaining moderate
   advisory: `stream-json` under `jayson` (from `@solana/web3.js` v1) — not loaded by the app
   (web3.js uses only `jayson/lib/client/browser`); no upstream fix; forcing v3 breaks jayson.
+  Accepted high (owner decision 2026-10-08): `braces` ≤ 3.0.3 (GHSA-vfj7-8cjw-p6xm), reached only via
+  `@solana-mobile/wallet-adapter-mobile` → `react-native` → `metro` (never run by the web app); no fixed
+  release yet. Remove it from `ACCEPTED` in `scripts/check-audit.mjs` once `braces` ships a fix.
 - **Revenue reconciliation** (C10): Admin → Fees & Revenue → Reconciliation.
 
 ## Sign-in (2026-09-30)

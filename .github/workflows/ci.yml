@@ -48,5 +48,5 @@ jobs:
       - name: No server secrets in the client bundle
         run: node scripts/check-client-bundle.mjs
 
-      - name: Dependency audit (production, high and critical fail the build)
-        run: npm audit --omit=dev --audit-level=high
+      - name: Dependency audit (production; high and critical fail unless accepted in scripts/check-audit.mjs)
+        run: node scripts/check-audit.mjs
