@@ -178,10 +178,16 @@ export function WalletConnectButton({
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={connecting}
-        className="inline-flex items-center gap-2 rounded-full bg-[image:var(--gradient-hero)] text-white px-4 py-2 text-sm font-semibold shadow-[var(--shadow-soft)] hover:opacity-95 transition disabled:opacity-60"
+        className="inline-flex items-center gap-1.5 sm:gap-2 whitespace-nowrap rounded-full bg-[image:var(--gradient-hero)] text-white px-3 sm:px-4 py-2 text-sm font-semibold shadow-[var(--shadow-soft)] hover:opacity-95 transition disabled:opacity-60"
       >
         <Wallet className="w-4 h-4" />
-        {connecting ? "Connecting…" : "Connect wallet"}
+        {connecting ? (
+          "Connecting…"
+        ) : (
+          <span>
+            Connect<span className="hidden sm:inline"> wallet</span>
+          </span>
+        )}
         <ChevronDown className="w-3.5 h-3.5" />
       </button>
       {open && (

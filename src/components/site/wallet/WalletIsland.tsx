@@ -21,9 +21,11 @@ function WalletFallbackButton() {
     <button
       type="button"
       disabled
-      className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold text-muted-foreground opacity-70"
+      className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border bg-card px-3 sm:px-4 py-2 text-sm font-semibold text-muted-foreground opacity-70"
     >
-      Connect wallet
+      <span>
+        Connect<span className="hidden sm:inline"> wallet</span>
+      </span>
     </button>
   );
 }
@@ -33,9 +35,11 @@ function WalletStartButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-2 rounded-full bg-[image:var(--gradient-hero)] text-white px-4 py-2 text-sm font-semibold shadow-[var(--shadow-soft)] hover:opacity-95 transition"
+      className="inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-[image:var(--gradient-hero)] text-white px-3 sm:px-4 py-2 text-sm font-semibold shadow-[var(--shadow-soft)] hover:opacity-95 transition"
     >
-      Connect wallet
+      <span>
+        Connect<span className="hidden sm:inline"> wallet</span>
+      </span>
     </button>
   );
 }

@@ -28,6 +28,8 @@ import {
 import {
   DappWorkspace,
   GlowCard,
+  MobileCollapse,
+  MobileDock,
   Picker,
   RailCard,
   Skeleton,
@@ -42,6 +44,7 @@ import {
   TestPayIsland,
 } from "@/components/site/wallet/WalletIsland";
 import { formatMinor, toMajor, toMinor } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import type { PayoutCountry } from "@/lib/payout-countries";
 import { requestWalletConnect, requestWalletSignIn, useAppWallet } from "@/lib/wallet-state";
 import { chargesFee, splitTotal, type FeeModel } from "@/lib/payments/fee-math";
@@ -198,7 +201,7 @@ function PayPage() {
         </Notice>
       )}
       {mode.indicator.tone === "test" && (
-        <Notice tone="info">
+        <Notice tone="info" collapsible>
           <strong>TEST MODE</strong> · no real funds can move. Balances are Solana devnet test
           assets, the payout partner runs in its sandbox, and swaps are priced live but not executed
           (Jupiter runs on mainnet only).
@@ -823,6 +826,30 @@ function ConvertForm({
                     : "Getting the live price…"
                   : "Get live quote";
 
+  const ctaDisabled =
+    create.isPending ||
+    signingIn ||
+    (!needsSignIn &&
+      !differentWallet &&
+      walletKey !== null &&
+      (!ready || blocked || belowMin || aboveMax));
+  // One primary action, placed per screen size (phone bar, tablet form, xl panel).
+  // cn() so the visibility classes win over PRIMARY's inline-flex.
+  const ctaButton = (className: string) => (
+    <button
+      type="button"
+      onClick={submit}
+      disabled={ctaDisabled}
+      className={cn(PRIMARY, className)}
+    >
+      {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+      {ctaLabel}
+      {walletKey && ready && !blocked && !aboveMax && !belowMin && (
+        <ArrowRight className="w-4 h-4" />
+      )}
+    </button>
+  );
+
   const rail = (
     <RailCard footer={<TrustList />}>
       <DappStepper current={step} />
@@ -842,7 +869,7 @@ function ConvertForm({
         >
           <div className="flex items-center justify-between gap-3 pb-1">
             <div>
-              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+              <h1 className="text-[1.35rem] leading-tight sm:text-2xl font-semibold tracking-tight">
                 Convert crypto to <span className="text-uv">your bank account</span>
               </h1>
               <p className="text-sm text-muted-foreground mt-0.5">
@@ -959,8 +986,8 @@ function ConvertForm({
           </div>
 
           {/* Arrow */}
-          <div className="relative flex justify-center -my-6 z-10" aria-hidden>
-            <span className="grid place-items-center w-11 h-11 rounded-2xl border-4 border-card bg-[image:var(--gradient-hero)] text-white shadow-[var(--shadow-elegant)]">
+          <div className="relative flex justify-center -my-5 sm:-my-6 z-10" aria-hidden>
+            <span className="grid place-items-center w-10 h-10 sm:w-11 sm:h-11 rounded-2xl border-4 border-card bg-[image:var(--gradient-hero)] text-white shadow-[var(--shadow-elegant)]">
               <ArrowDown className="w-5 h-5" />
             </span>
           </div>
@@ -1024,24 +1051,8 @@ function ConvertForm({
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={
-              create.isPending ||
-              signingIn ||
-              (!needsSignIn &&
-                !differentWallet &&
-                walletKey !== null &&
-                (!ready || blocked || belowMin || aboveMax))
-            }
-            className={`${PRIMARY} w-full justify-center py-4 text-base mt-2 xl:hidden`}
-          >
-            {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            {ctaLabel}
-            {walletKey && ready && !blocked && !aboveMax && !belowMin && (
-              <ArrowRight className="w-4 h-4" />
-            )}
-          </button>
+          {/* Tablets; phones use the action bar, xl the summary panel. */}
+          {ctaButton("hidden sm:flex xl:hidden w-full justify-center py-4 text-base mt-2")}
           {needsSignIn && (
             <div className="xl:hidden">
               <EmailSignInHint next={emailSignInNext} />
@@ -1156,7 +1167,7 @@ function ConvertForm({
             <div className="px-4 py-2.5">
               <div className="flex justify-between gap-3">
                 <span className="font-medium">LamportPay + payout partner fees</span>
-                <span className="tabular-nums font-semibold">
+                <span className="tabular-nums font-semibold whitespace-nowrap">
                   {mergedFee !== null ? (
                     `−${mergedFee} USD`
                   ) : estimate.isLoading ? (
@@ -1266,25 +1277,7 @@ function ConvertForm({
               has no devnet). Your payment continues in test USDC and no SOL is spent.
             </Notice>
           )}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={
-              create.isPending ||
-              signingIn ||
-              (!needsSignIn &&
-                !differentWallet &&
-                walletKey !== null &&
-                (!ready || blocked || belowMin || aboveMax))
-            }
-            className={`${PRIMARY} w-full justify-center py-3.5 text-base hidden xl:inline-flex`}
-          >
-            {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            {ctaLabel}
-            {walletKey && ready && !blocked && !aboveMax && !belowMin && (
-              <ArrowRight className="w-4 h-4" />
-            )}
-          </button>
+          {ctaButton("hidden xl:flex w-full justify-center py-3.5 text-base")}
           {needsSignIn && (
             <div className="hidden xl:block">
               <EmailSignInHint next={emailSignInNext} />
@@ -1305,6 +1298,28 @@ function ConvertForm({
       <div className="lg:hidden px-1">
         <TrustList />
       </div>
+      <MobileDock className="sm:hidden">
+        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">You receive</span>
+          <span
+            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
+          >
+            {priced ? (
+              <>
+                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
+                <span className="font-semibold text-muted-foreground">{currency}</span>
+              </>
+            ) : estimate.isFetching ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <span className="text-muted-foreground">
+                {destination ? "Enter an amount" : "Choose a country"}
+              </span>
+            )}
+          </span>
+        </div>
+        {ctaButton("flex w-full justify-center py-3.5 text-base")}
+      </MobileDock>
     </>
   );
 
@@ -1482,6 +1497,27 @@ function PaymentPanel({
             </span>
           </div>
 
+          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-secondary/50 p-3 sm:p-4">
+            <div className="min-w-0">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                You send
+              </div>
+              <div className="mt-0.5 truncate text-lg font-semibold tabular-nums">
+                {money(p.totalToPay.amountMinor, p.totalToPay.currency)}
+              </div>
+            </div>
+            <div className="min-w-0 text-right">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {p.actualPayout ? "You received" : "You receive"}
+              </div>
+              <div className="mt-0.5 truncate text-lg font-bold tabular-nums text-uv">
+                {p.actualPayout
+                  ? money(p.actualPayout.amountMinor, p.actualPayout.currency)
+                  : money(p.destination.amountMinor, p.destination.currency)}
+              </div>
+            </div>
+          </div>
+
           {p.failureReason && <Notice tone="warn">{p.failureReason}</Notice>}
           {p.payoutEstimateMinutes !== null && !walletCheck && (
             <Notice tone="info">
@@ -1516,9 +1552,19 @@ function PaymentPanel({
         </div>
       </GlowCard>
 
-      {preTransfer && p.settlement && (
-        <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
-      )}
+      {preTransfer &&
+        p.settlement &&
+        (p.settlement.kind === "funds_ready" ? (
+          // Nothing to do here: one line on phones, so the next step stays in view.
+          <MobileCollapse
+            title={`Paying with ${(p.settlement.coin ?? p.source.currency).toUpperCase()}`}
+            summary={`${SETTLEMENT_TITLES.funds_ready} · ${p.settlement.reason}`}
+          >
+            <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
+          </MobileCollapse>
+        ) : (
+          <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
+        ))}
       {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
       {p.status === "QUOTED" && (
         <CheckoutFlow
@@ -1538,14 +1584,16 @@ function PaymentPanel({
           <p className="text-sm text-muted-foreground">
             Your transfer is ready. Approve the payment in your wallet to continue.
           </p>
-          <TestPayIsland
-            paymentId={p.id}
-            expectedWallet={p.settlement?.wallet ?? null}
-            autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
-            onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
-            label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
-            onPaid={setPayment}
-          />
+          <MobileDock>
+            <TestPayIsland
+              paymentId={p.id}
+              expectedWallet={p.settlement?.wallet ?? null}
+              autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
+              onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
+              label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
+              onPaid={setPayment}
+            />
+          </MobileDock>
         </Card>
       )}
       {p.testPayment && (
@@ -1586,33 +1634,46 @@ function PaymentPanel({
                 </div>
               </div>
             </div>
-            <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
-              View receipt <ArrowRight className="w-4 h-4" />
-            </Link>
+            <MobileDock>
+              <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
+                View receipt <ArrowRight className="w-4 h-4" />
+              </Link>
+            </MobileDock>
           </div>
         </div>
       )}
-      <Card>
-        <div className="flex items-center justify-between gap-2">
-          <div className="font-semibold">What has happened</div>
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)] animate-pulse" />
-            Updates automatically
-          </span>
-        </div>
-        <StatusTimeline payment={p} />
-        <Timeline payment={p} />
-      </Card>
+      <MobileCollapse
+        title="What has happened"
+        summary={STATUS_LABELS[p.status] ?? p.status}
+        enabled={preTransfer}
+      >
+        <Card>
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold">What has happened</div>
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)] animate-pulse" />
+              Updates automatically
+            </span>
+          </div>
+          <StatusTimeline payment={p} />
+          <Timeline payment={p} />
+        </Card>
+      </MobileCollapse>
     </>
   );
 
   const aside = (
-    <GlowCard>
-      <div className="p-5 space-y-3">
-        <h2 className="text-sm font-semibold">Fees &amp; costs</h2>
-        <CostSummary payment={p} />
-      </div>
-    </GlowCard>
+    <MobileCollapse
+      title="Fees & costs"
+      summary={`LamportPay fee ${p.platformFee ? money(p.platformFee.amountMinor, p.platformFee.currency) : "—"} · rate ${p.exchangeRate !== null ? `1 ${p.source.currency.toUpperCase()} = ${Number(p.exchangeRate.toPrecision(6))} ${p.destination.currency.toUpperCase()}` : "—"}`}
+    >
+      <GlowCard>
+        <div className="p-4 sm:p-5 space-y-3">
+          <h2 className="text-sm font-semibold">Fees &amp; costs</h2>
+          <CostSummary payment={p} />
+        </div>
+      </GlowCard>
+    </MobileCollapse>
   );
 
   return <DappWorkspace rail={rail} main={main} aside={aside} />;
@@ -1784,7 +1845,7 @@ function TravelRuleCard({ payment, onCheck }: { payment: PaymentView; onCheck: (
   const expired = rule.status === "expired" || (left !== null && left <= 0);
 
   return (
-    <div className="rounded-3xl border-2 border-[color:var(--warning)] bg-card p-6 space-y-4">
+    <div className="rounded-3xl border-2 border-[color:var(--warning)] bg-card p-4 sm:p-6 space-y-4">
       <div className="flex items-center gap-2 font-semibold">
         <Wallet className="w-5 h-5 text-primary" />
         Verify the wallet you paid from
@@ -1838,7 +1899,7 @@ function TravelRuleCard({ payment, onCheck }: { payment: PaymentView; onCheck: (
               Link valid for {remaining(left)} (until {new Date(rule.expiresAt!).toLocaleString()}).
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-3">
+          <MobileDock className="flex flex-wrap items-center gap-3 max-sm:gap-2">
             <a
               href={rule.verificationUrl}
               target="_blank"
@@ -1851,7 +1912,7 @@ function TravelRuleCard({ payment, onCheck }: { payment: PaymentView; onCheck: (
               <RefreshCw className="w-3.5 h-3.5" />
               I've finished — check again
             </button>
-          </div>
+          </MobileDock>
         </>
       )}
     </div>
@@ -2069,16 +2130,18 @@ function CheckoutFlow({
                 </Notice>
               )}
               {testMode ? (
-                <TestPayIsland
-                  paymentId={payment.id}
-                  prepare={createTransfer}
-                  disabled={!canPay}
-                  expectedWallet={payment.settlement?.wallet ?? null}
-                  label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
-                  onPaid={onChanged}
-                />
+                <MobileDock>
+                  <TestPayIsland
+                    paymentId={payment.id}
+                    prepare={createTransfer}
+                    disabled={!canPay}
+                    expectedWallet={payment.settlement?.wallet ?? null}
+                    label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
+                    onPaid={onChanged}
+                  />
+                </MobileDock>
               ) : (
-                <>
+                <MobileDock className="space-y-3 max-sm:space-y-2">
                   <button
                     type="button"
                     disabled={!canPay || liveTransfer.isPending}
@@ -2094,7 +2157,7 @@ function CheckoutFlow({
                     approve.
                   </p>
                   {liveTransfer.error && <ErrorText error={liveTransfer.error} />}
-                </>
+                </MobileDock>
               )}
             </div>
           }
@@ -2269,7 +2332,7 @@ function PayoutDetailsStep({
         {countryName(payment.destination.country)}. Only what our payout partner needs for{" "}
         {currency} is asked. LamportPay keeps just the bank name and the last four digits.
       </p>
-      <form className="space-y-4" onSubmit={submit}>
+      <form id={`payout-details-${payment.id}`} className="space-y-4" onSubmit={submit}>
         <div className="grid sm:grid-cols-2 gap-3">
           {verifiedName ? (
             <div className="sm:col-span-2">
@@ -2432,10 +2495,17 @@ function PayoutDetailsStep({
           </div>
         )}
 
-        <button type="submit" disabled={check.isPending} className={PRIMARY}>
-          {check.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          Continue <ArrowRight className="w-4 h-4" />
-        </button>
+        <MobileDock>
+          <button
+            type="submit"
+            form={`payout-details-${payment.id}`}
+            disabled={check.isPending}
+            className={PRIMARY}
+          >
+            {check.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+            Continue <ArrowRight className="w-4 h-4" />
+          </button>
+        </MobileDock>
         {check.error && <ErrorText error={check.error} />}
       </form>
     </Card>
@@ -2461,7 +2531,7 @@ function VerificationGate({ kyc }: { kyc: KycStatus | undefined }) {
     );
   }
   const openButton = (
-    <div className="flex flex-wrap items-center gap-3">
+    <MobileDock className="flex flex-wrap items-center gap-3 max-sm:gap-1.5">
       {kyc.kycLink ? (
         <a href={kyc.kycLink} target="_blank" rel="noopener noreferrer" className={PRIMARY}>
           Verify with Stables <ExternalLink className="w-4 h-4" />
@@ -2480,7 +2550,7 @@ function VerificationGate({ kyc }: { kyc: KycStatus | undefined }) {
       <span className="text-xs text-muted-foreground">
         Opens Stables' secure page in a new tab. LamportPay never sees your documents.
       </span>
-    </div>
+    </MobileDock>
   );
   return (
     <Card>
@@ -2705,15 +2775,15 @@ function Timeline({ payment }: { payment: PaymentView }) {
 // ------------------------------------------------------------------- bits
 
 const INPUT =
-  "w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm transition focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10";
+  "w-full rounded-xl border border-border bg-background px-3 py-3 sm:py-2.5 text-base sm:text-sm transition focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10";
 const PRIMARY =
-  "inline-flex items-center gap-2 rounded-2xl bg-[image:var(--gradient-hero)] text-white px-5 py-2.5 font-semibold shadow-[0_12px_30px_-10px_oklch(0.52_0.22_275/0.6)] hover:shadow-[0_16px_40px_-10px_oklch(0.52_0.22_275/0.75)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:cursor-not-allowed";
+  "inline-flex items-center gap-2 rounded-2xl bg-[image:var(--gradient-hero)] text-white px-5 py-2.5 font-semibold shadow-[0_12px_30px_-10px_oklch(0.52_0.22_275/0.6)] hover:shadow-[0_16px_40px_-10px_oklch(0.52_0.22_275/0.75)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:cursor-not-allowed max-sm:w-full max-sm:justify-center max-sm:py-3.5";
 const SECONDARY =
-  "inline-flex items-center gap-2 rounded-2xl bg-card border border-border px-4 py-2 text-sm font-semibold hover:border-primary/40 hover:bg-secondary transition disabled:opacity-50";
+  "inline-flex items-center gap-2 rounded-2xl bg-card border border-border px-4 py-2 text-sm font-semibold hover:border-primary/40 hover:bg-secondary transition disabled:opacity-50 max-sm:w-full max-sm:justify-center max-sm:py-3";
 
 function Card({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-3xl border border-border/60 bg-card/90 backdrop-blur-xl p-5 sm:p-6 space-y-4 shadow-[var(--shadow-soft)]">
+    <div className="rounded-3xl border border-border/60 bg-card/90 backdrop-blur-xl p-4 sm:p-6 space-y-4 shadow-[var(--shadow-soft)]">
       {children}
     </div>
   );
@@ -2741,7 +2811,17 @@ function KV({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
-function Notice({ tone, children }: { tone: "info" | "warn"; children: ReactNode }) {
+function Notice({
+  tone,
+  children,
+  collapsible = false,
+}: {
+  tone: "info" | "warn";
+  children: ReactNode;
+  /** Phones: show two lines and a "More" toggle, so long notes don't push the form down. */
+  collapsible?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <div
       className={`flex items-start gap-2 rounded-xl px-4 py-3 text-sm ${
@@ -2753,7 +2833,20 @@ function Notice({ tone, children }: { tone: "info" | "warn"; children: ReactNode
       <AlertCircle
         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === "warn" ? "text-destructive" : "text-primary"}`}
       />
-      <span>{children}</span>
+      <span className="min-w-0">
+        <span className={collapsible && !expanded ? "max-sm:line-clamp-2" : undefined}>
+          {children}
+        </span>
+        {collapsible && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="sm:hidden mt-1 text-xs font-semibold text-primary"
+          >
+            {expanded ? "Less" : "More"}
+          </button>
+        )}
+      </span>
     </div>
   );
 }
