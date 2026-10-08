@@ -15,7 +15,7 @@
  * never holds funds and keeps no balances.
  */
 import type { Json } from "@/integrations/supabase/types";
-import { requireRealFundsMode } from "@/lib/app-mode.server";
+import { currentMode, requireRealFundsMode } from "@/lib/app-mode.server";
 import { kycStateOf } from "@/lib/identity/kyc-state";
 import { toMajor, toMinor } from "@/lib/money";
 import { readWalletHoldings, solReserveLamports } from "@/lib/solana-balances.server";
@@ -1465,6 +1465,23 @@ export async function createPaymentTransfer(
       const amount = toMajor(BigInt(payment.source_amount_minor), sourceCurrency);
       const byAmount = amountRejected(e, `${groupThousands(amount)} ${label(sourceCurrency)}`);
       if (byAmount) throw byAmount;
+      // TEST MODE: the Stables sandbox answers 500 for some transfers that production
+      // accepts (GBP unless the amount sent to it is a multiple of 20 USDC, found
+      // 3 Oct 2026). Say so instead of "unavailable", which reads as an outage.
+      if (creatingTransfer && e.status >= 500 && currentMode().mode === "test") {
+        console.error(
+          "[stables] sandbox transfer create failed",
+          e.status,
+          `correlation_id=${e.correlationId ?? "-"}`,
+        );
+        throw new PaymentError(
+          `The payout partner's test system could not create this transfer (error ${e.status}). ` +
+            "Its sandbox only accepts some amounts: for GBP, the amount converted must be a " +
+            "multiple of 20 USDC. Start a new payment with a different amount, or another currency.",
+          502,
+          "stables_sandbox_error",
+        );
+      }
     }
     rethrow(e);
   }
