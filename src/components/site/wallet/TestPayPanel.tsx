@@ -78,6 +78,8 @@ export function TestPayPanel({
   const { connection } = useConnection();
   const [busy, setBusy] = useState<"prepare" | "sign" | "detect" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // TEST MODE: the partner's sandbox refused this amount; offer one that it accepts.
+  const [retry, setRetry] = useState<{ amount: string; country: string } | null>(null);
   const running = useRef(false);
 
   const pay = useCallback(async () => {
@@ -90,6 +92,7 @@ export function TestPayPanel({
     }
     running.current = true;
     setError(null);
+    setRetry(null);
     try {
       if (prepare) {
         setBusy("prepare");
@@ -119,6 +122,7 @@ export function TestPayPanel({
       setError(
         e instanceof PaymentApiError ? e.message : walletActionErrorMessage(e, "Payment failed."),
       );
+      setRetry(e instanceof PaymentApiError ? e.retry : null);
     } finally {
       running.current = false;
       setBusy(null);
@@ -162,8 +166,16 @@ export function TestPayPanel({
         <p className="text-xs text-muted-foreground">Connect your wallet (top right) to pay.</p>
       )}
       {error && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-          {error}
+        <div className="space-y-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          <p>{error}</p>
+          {retry && (
+            <a
+              href={`/pay?amount=${encodeURIComponent(retry.amount)}&country=${encodeURIComponent(retry.country)}`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-xs font-semibold text-background hover:opacity-90 transition"
+            >
+              Start again with {retry.amount} USDC
+            </a>
+          )}
         </div>
       )}
     </div>

@@ -167,11 +167,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
   // overflow-x-clip, not -hidden: "hidden" makes this div a scroll container,
   // which silently breaks the sticky header and the sticky /pay side panels.
   return (
-    <div className="relative min-h-screen flex flex-col bg-background text-foreground overflow-x-clip">
-      {/* Brand backdrop: soft violet/cyan glows and a faint grid, behind everything. */}
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+    <div className="relative isolate min-h-screen flex flex-col bg-background text-foreground overflow-x-clip">
+      {/* Brand backdrop: soft violet/cyan glows, concentric brand rings in two
+          corners (gradient hairlines, like a bank's hero) and a faint grid. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_15%_-10%,oklch(0.62_0.28_295/0.14),transparent_60%),radial-gradient(ellipse_70%_50%_at_95%_0%,oklch(0.82_0.18_200/0.14),transparent_60%),radial-gradient(ellipse_60%_50%_at_50%_110%,oklch(0.7_0.28_330/0.08),transparent_60%)]" />
-        <div className="absolute inset-0 bg-grid-uv opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent_70%)]" />
+        <div className="absolute inset-0 bg-grid-uv opacity-40 [mask-image:linear-gradient(to_bottom,black,transparent_60%)]" />
+        {[
+          "right-[-260px] top-[-300px] h-[760px] w-[760px] opacity-70",
+          "right-[-150px] top-[-190px] h-[540px] w-[540px] opacity-60",
+          "right-[-40px] top-[-80px] h-[320px] w-[320px] opacity-50",
+          "left-[-300px] bottom-[-340px] h-[820px] w-[820px] opacity-50",
+          "left-[-170px] bottom-[-210px] h-[560px] w-[560px] opacity-40",
+        ].map((place) => (
+          <div
+            key={place}
+            className={`brand-ring absolute rounded-full max-sm:scale-50 ${place}`}
+          />
+        ))}
+        <div className="absolute right-[12%] top-[18%] h-64 w-64 rounded-full bg-[radial-gradient(circle,oklch(0.82_0.18_200/0.18),transparent_70%)] blur-2xl" />
+        <div className="absolute left-[8%] bottom-[10%] h-72 w-72 rounded-full bg-[radial-gradient(circle,oklch(0.62_0.28_295/0.14),transparent_70%)] blur-2xl" />
       </div>
 
       <header className="sticky top-0 z-40 bg-background/75 backdrop-blur-xl print:hidden">

@@ -5,11 +5,20 @@ import {
   configuredPayoutCountries,
   DEFAULT_PAYOUT_COUNTRIES,
   payoutCountriesFrom,
+  TEST_MODE_PAYOUT_COUNTRIES,
 } from "@/lib/payout-countries";
 import { getAppWallet, requestWalletConnect, setAppWallet } from "@/lib/wallet-state";
 
 describe("payout countries", () => {
-  it("defaults to the Stables dashboard currencies LamportPay can pay out (TEST and LIVE)", () => {
+  it("TEST MODE defaults to the destinations the partner's sandbox completes", () => {
+    const list = configuredPayoutCountries(undefined, "test");
+    expect(list.map((c) => c.code)).toEqual(TEST_MODE_PAYOUT_COUNTRIES);
+    expect(list.map((c) => c.currency)).toEqual(["USD", "GBP", "INR", "PHP"]);
+    // An explicit PAYOUT_COUNTRIES still wins in TEST MODE.
+    expect(configuredPayoutCountries("NG,KE", "test").map((c) => c.code)).toEqual(["NG", "KE"]);
+  });
+
+  it("defaults to the Stables dashboard currencies LamportPay can pay out (LIVE)", () => {
     const list = configuredPayoutCountries(undefined);
     expect(list.map((c) => c.code)).toEqual(DEFAULT_PAYOUT_COUNTRIES);
     // CNY is in Stables' list but needs trade documents: not offered.

@@ -359,3 +359,21 @@
 .rail-group:hover .animate-rail-right {
   animation-play-state: paused;
 }
+
+/* App backdrop rings: a thin hairline circle in the brand gradient (violet → cyan
+   → magenta), drawn with a mask so only the outline shows. */
+.brand-ring {
+  background: conic-gradient(
+    from 210deg,
+    oklch(0.62 0.28 295 / 0.55),
+    oklch(0.82 0.18 200 / 0.5),
+    oklch(0.7 0.28 330 / 0.35),
+    oklch(0.62 0.28 295 / 0.55)
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 1.5px),
+    #000 calc(100% - 1px)
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1px));
+}

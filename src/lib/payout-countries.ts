@@ -60,8 +60,23 @@ export function payoutCountriesFrom(codes: readonly string[]): PayoutCountry[] {
   return out;
 }
 
-/** PAYOUT_COUNTRIES from the environment, or the evidence-based default. */
-export function configuredPayoutCountries(raw: string | undefined): PayoutCountry[] {
+/**
+ * TEST MODE default (owner, 8 Oct 2026: "currencies not working, fix it"): only
+ * the destinations Stables' sandbox takes to `completed` — USD, GBP, INR, PHP
+ * (docs/testing/stables-sandbox-matrix-2026-10-03.md and payments up to 8 Oct).
+ * The sandbox leaves the others in `in_progress` and fails them days later, so
+ * a test payment to them can never finish. LIVE MODE keeps the full list.
+ */
+export const TEST_MODE_PAYOUT_COUNTRIES = ["US", "GB", "IN", "PH"];
+
+/** PAYOUT_COUNTRIES from the environment, or the evidence-based default for the mode. */
+export function configuredPayoutCountries(
+  raw: string | undefined,
+  mode: "test" | "live" = "live",
+): PayoutCountry[] {
   const list = raw?.trim() ? payoutCountriesFrom(raw.split(",")) : [];
-  return list.length > 0 ? list : payoutCountriesFrom(DEFAULT_PAYOUT_COUNTRIES);
+  if (list.length > 0) return list;
+  return payoutCountriesFrom(
+    mode === "test" ? TEST_MODE_PAYOUT_COUNTRIES : DEFAULT_PAYOUT_COUNTRIES,
+  );
 }

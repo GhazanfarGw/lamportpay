@@ -202,14 +202,21 @@ function PayPage() {
         </Notice>
       )}
       {mode.indicator.tone === "test" && (
-        <Notice tone="info" collapsible>
-          <strong>TEST MODE</strong> · no real funds can move. Balances are Solana devnet test
-          assets, the payout partner runs in its sandbox, and swaps are priced live but not executed
-          (Jupiter runs on mainnet only).
-          {limits.usdc?.max &&
-            ` Test limit: ${limits.usdc.min}–${limits.usdc.max} USDC per payment.`}{" "}
-          Pay Now asks your wallet to sign a devnet test transaction that moves no funds; once it is
-          detected, the payout partner&apos;s sandbox simulates the deposit.
+        <Notice
+          tone="info"
+          more={
+            <>
+              Balances are Solana devnet test assets, the payout partner runs in its sandbox, and
+              swaps are priced live but not executed (Jupiter runs on mainnet only).
+              {limits.usdc?.max &&
+                ` Test limit: ${limits.usdc.min}–${limits.usdc.max} USDC per payment.`}{" "}
+              Pay Now asks your wallet to sign a devnet test transaction that moves no funds; once
+              it is detected, the payout partner&apos;s sandbox simulates the deposit.
+            </>
+          }
+        >
+          <strong>Test mode</strong> · Solana devnet and the payout partner&apos;s sandbox. No real
+          funds move.
         </Notice>
       )}
       {mode.indicator.tone === "live" && (
@@ -245,10 +252,16 @@ function PayPage() {
   );
 }
 
-/** Trust points under the rail (desktop) and under the summary (mobile). */
-function TrustList() {
+/** Trust points: a column under the rail, or one row under the converter. */
+function TrustList({ row = false }: { row?: boolean }) {
   return (
-    <ul className="space-y-2 text-xs text-muted-foreground">
+    <ul
+      className={
+        row
+          ? "flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground"
+          : "space-y-2 text-xs text-muted-foreground"
+      }
+    >
       {[
         "Non-custodial: we never hold your funds",
         "Paid only to your own bank account",
@@ -1021,14 +1034,16 @@ function ConvertForm({
           <div className="rounded-2xl border border-border/60 bg-[linear-gradient(180deg,oklch(0.97_0.012_275),oklch(0.985_0.006_270))] p-4 sm:p-5">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span className="font-medium uppercase tracking-wider">To your own bank account</span>
-              {destination && <span>Payout currency set by country</span>}
+              {destination && (
+                <span className="hidden sm:inline">Payout currency set by country</span>
+              )}
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
                 {destination ? (
                   <>
                     <div
-                      className={`text-3xl sm:text-4xl font-semibold tracking-tight tabular-nums transition-opacity ${
+                      className={`whitespace-nowrap text-[1.75rem] sm:text-4xl font-semibold tracking-tight tabular-nums transition-opacity ${
                         priced ? "text-foreground" : "text-muted-foreground/60"
                       } ${updating ? "opacity-60" : ""}`}
                     >
@@ -1097,6 +1112,7 @@ function ConvertForm({
           )}
         </form>
       </GlowCard>
+      <TrustList row />
       {signedIn && <KycCard compact />}
       <MobileDock className="sm:hidden">
         <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
@@ -1282,47 +1298,50 @@ function ConvertForm({
                   )}
                 </ul>
               </div>
-              <div className="px-4 py-2.5">
-                <div className="flex justify-between gap-3">
-                  <span className={paySol ? "font-medium" : "text-muted-foreground"}>
-                    {paySol ? "Jupiter swap" : "Swap (only if paying in SOL)"}
-                  </span>
-                  <span className="tabular-nums">
-                    {est?.sol?.status === "quoted" ? (
-                      paySol ? (
-                        `${grouped(est.sol.solIn)} SOL → ${grouped(est.sol.coinOut)} ${coinKey.toUpperCase()}`
+              {/* Swap line only when SOL is involved (paying in SOL, or a live SOL price). */}
+              {(paySol || est?.sol?.status === "quoted") && (
+                <div className="px-4 py-2.5">
+                  <div className="flex justify-between gap-3">
+                    <span className={paySol ? "font-medium" : "text-muted-foreground"}>
+                      {paySol ? "Jupiter swap" : "Swap (only if paying in SOL)"}
+                    </span>
+                    <span className="tabular-nums">
+                      {est?.sol?.status === "quoted" ? (
+                        paySol ? (
+                          `${grouped(est.sol.solIn)} SOL → ${grouped(est.sol.coinOut)} ${coinKey.toUpperCase()}`
+                        ) : (
+                          `≈ ${grouped(Number(est.sol.solIn).toFixed(4))} SOL`
+                        )
+                      ) : est?.sol?.status === "unavailable" ? (
+                        <span className="text-muted-foreground">{est.sol.reason}</span>
+                      ) : estimate.isFetching && !est ? (
+                        <Skeleton className="h-3.5 w-16" />
                       ) : (
-                        `≈ ${grouped(Number(est.sol.solIn).toFixed(4))} SOL`
-                      )
-                    ) : est?.sol?.status === "unavailable" ? (
-                      <span className="text-muted-foreground">{est.sol.reason}</span>
-                    ) : estimate.isFetching && !est ? (
-                      <Skeleton className="h-3.5 w-16" />
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </span>
-                </div>
-                {est?.sol?.status === "quoted" && (
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    Jupiter fee{" "}
-                    {est.sol.jupiterFeeBps !== null
-                      ? `${est.sol.jupiterFeeBps / 100}%${est.sol.jupiterFeeMint ? ` (in ${est.sol.jupiterFeeMint.toUpperCase()})` : ""}`
-                      : "n/a"}{" "}
-                    · price impact{" "}
-                    {est.sol.priceImpactPct !== null
-                      ? `${(Math.abs(est.sol.priceImpactPct) * 100).toFixed(3)}%`
-                      : "n/a"}
-                    {est.sol.routeLabels.length > 0 && ` · via ${est.sol.routeLabels.join(", ")}`}
-                    {testMode && (
-                      <div className="mt-0.5">
-                        Live mainnet price (read-only). Jupiter has no devnet, so TEST MODE can't
-                        run the swap itself.
-                      </div>
-                    )}
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </span>
                   </div>
-                )}
-              </div>
+                  {est?.sol?.status === "quoted" && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      Jupiter fee{" "}
+                      {est.sol.jupiterFeeBps !== null
+                        ? `${est.sol.jupiterFeeBps / 100}%${est.sol.jupiterFeeMint ? ` (in ${est.sol.jupiterFeeMint.toUpperCase()})` : ""}`
+                        : "n/a"}{" "}
+                      · price impact{" "}
+                      {est.sol.priceImpactPct !== null
+                        ? `${(Math.abs(est.sol.priceImpactPct) * 100).toFixed(3)}%`
+                        : "n/a"}
+                      {est.sol.routeLabels.length > 0 && ` · via ${est.sol.routeLabels.join(", ")}`}
+                      {testMode && (
+                        <div className="mt-0.5">
+                          Live mainnet price (read-only). Jupiter has no devnet, so TEST MODE can't
+                          run the swap itself.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="px-4 py-2 text-[11px] text-muted-foreground">
                 Solana network fee: a tiny amount of SOL, shown when you sign.
               </div>
@@ -1354,9 +1373,6 @@ function ConvertForm({
           )}
         </div>
       </GlowCard>
-      <div className="px-1">
-        <TrustList />
-      </div>
     </>
   );
 
@@ -3071,35 +3087,39 @@ function KV({ k, v }: { k: string; v: ReactNode }) {
 function Notice({
   tone,
   children,
-  collapsible = false,
+  more,
 }: {
   tone: "info" | "warn";
   children: ReactNode;
-  /** Two lines and a "More" toggle, so long notes don't push the current step down. */
-  collapsible?: boolean;
+  /** Details behind a "More" toggle, so the note stays one line until asked. */
+  more?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div
-      className={`flex items-start gap-2 rounded-xl px-4 py-3 text-sm ${
+      className={`flex items-start gap-2.5 rounded-2xl px-4 py-2.5 text-sm ${
         tone === "warn"
           ? "border border-destructive/30 bg-destructive/10"
-          : "border border-border/60 bg-secondary/60"
+          : "border border-primary/15 bg-card/70 backdrop-blur-xl shadow-[var(--shadow-soft)]"
       }`}
     >
       <AlertCircle
         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === "warn" ? "text-destructive" : "text-primary"}`}
       />
       <span className="min-w-0">
-        <span className={collapsible && !expanded ? "line-clamp-2" : undefined}>{children}</span>
-        {collapsible && (
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs font-semibold text-primary"
-          >
-            {expanded ? "Less" : "More"}
-          </button>
+        {children}
+        {more && (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="text-xs font-semibold text-primary hover:underline"
+            >
+              {expanded ? "Less" : "More"}
+            </button>
+            {expanded && <span className="mt-1 block text-muted-foreground">{more}</span>}
+          </>
         )}
       </span>
     </div>

@@ -98,8 +98,12 @@ export const Route = createFileRoute("/api/integration-status")({
               paymentCurrencies: coins,
               platformFeeBps: settings?.conversionFeeBps ?? null,
               platformFeeMin: settings?.feeMin ?? null,
-              // Countries the /pay picker offers (PAYOUT_COUNTRIES or the documented default).
-              payoutCountries: configuredPayoutCountries(process.env["PAYOUT_COUNTRIES"]),
+              // Countries the /pay picker offers (PAYOUT_COUNTRIES, or the documented
+              // default: TEST MODE only offers what the partner's sandbox completes).
+              payoutCountries: configuredPayoutCountries(
+                process.env["PAYOUT_COUNTRIES"],
+                currentMode().mode,
+              ),
               platformFeeMax: settings?.feeMax ?? null,
               outputDestination: "connected wallet only",
             },

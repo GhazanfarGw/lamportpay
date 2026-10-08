@@ -15,13 +15,22 @@ export class PaymentApiError extends Error {
     /** The partner's own wording, when the server passes it on. */
     readonly reason?: string,
     readonly fields: FieldIssue[] = [],
+    /** TEST MODE: a new payment the partner's sandbox accepts (amount + country). */
+    readonly retry: { amount: string; country: string } | null = null,
   ) {
     super(message);
     this.name = "PaymentApiError";
   }
 }
 
-type ErrorBody = { error?: string; code?: string; reason?: string; fields?: FieldIssue[] };
+type ErrorBody = {
+  error?: string;
+  code?: string;
+  reason?: string;
+  fields?: FieldIssue[];
+  retryAmount?: string;
+  retryCountry?: string;
+};
 
 export async function paymentApi<T>(
   path: string,
@@ -53,6 +62,9 @@ export async function paymentApi<T>(
       data.code,
       data.reason,
       Array.isArray(data.fields) ? data.fields : [],
+      typeof data.retryAmount === "string" && typeof data.retryCountry === "string"
+        ? { amount: data.retryAmount, country: data.retryCountry }
+        : null,
     );
   }
   return { status: res.status, data };
