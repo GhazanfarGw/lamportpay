@@ -110,7 +110,7 @@ export function WalletConnectButton({
         <button
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold hover:bg-secondary transition"
+          className="inline-flex items-center gap-1.5 sm:gap-2 whitespace-nowrap rounded-full border border-border bg-card pl-1.5 pr-2.5 sm:px-3 py-1.5 text-[13px] sm:text-sm font-semibold hover:bg-secondary transition"
         >
           {wallet?.adapter.icon ? (
             <img src={wallet.adapter.icon} alt="" className="w-5 h-5 rounded" />
@@ -119,7 +119,7 @@ export function WalletConnectButton({
           )}
           <span className="font-mono">{shortAddress(address)}</span>
           <span className="w-2 h-2 rounded-full bg-[color:var(--success)]" aria-label="Connected" />
-          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          <ChevronDown className="hidden sm:block w-3.5 h-3.5 text-muted-foreground" />
         </button>
         {open && (
           <>
@@ -188,7 +188,7 @@ export function WalletConnectButton({
             Connect<span className="hidden sm:inline"> wallet</span>
           </span>
         )}
-        <ChevronDown className="w-3.5 h-3.5" />
+        <ChevronDown className="hidden sm:block w-3.5 h-3.5" />
       </button>
       {open && (
         <>

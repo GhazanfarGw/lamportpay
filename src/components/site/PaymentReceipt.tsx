@@ -74,19 +74,25 @@ export function PaymentReceipt({
   const receipt = mode === "receipt";
 
   return (
-    <div className="rounded-3xl border border-border/60 bg-card p-6 space-y-5 print:border-0 print:p-0">
+    <div
+      className={`rounded-3xl border border-border/60 bg-card space-y-5 print:border-0 print:p-0 ${receipt ? "p-6" : "p-4 sm:p-6"}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-primary">
-            {receipt ? "Receipt" : "Payment summary"}
+        {receipt ? (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Receipt
+            </div>
+            <div className="text-lg font-semibold mt-1">
+              {money(p.source.amountMinor, p.source.currency)} →{" "}
+              {received
+                ? money(p.actualPayout!.amountMinor, p.actualPayout!.currency)
+                : money(p.destination.amountMinor, p.destination.currency)}
+            </div>
           </div>
-          <div className="text-lg font-semibold mt-1">
-            {money(p.source.amountMinor, p.source.currency)} →{" "}
-            {received
-              ? money(p.actualPayout!.amountMinor, p.actualPayout!.currency)
-              : money(p.destination.amountMinor, p.destination.currency)}
-          </div>
-        </div>
+        ) : (
+          <h2 className="text-base font-semibold">Review and pay</h2>
+        )}
         {receipt && (
           <button
             type="button"
@@ -189,98 +195,61 @@ export function PaymentReceipt({
           </Section>
         </>
       ) : (
-        // Summary before paying: amounts beside payment + bank details on wide
-        // screens, so the whole review fits with little scrolling.
+        // Review before paying: the essentials only (the receipt keeps every line).
+        // Amounts beside the bank account on wide screens, so it fits without scrolling.
         <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-8">
-          <div className="space-y-5">
-            <Section title="Amounts">
-              {/* What leaves the wallet = amount converted + LamportPay's fee (owner model:
-            the fee comes out of what the user sends). */}
-              <Row
-                k="Total from your wallet"
-                v={<strong>{money(totalMinor(p), p.source.currency)}</strong>}
-              />
-              <Row
-                k="LamportPay service fee"
-                v={
-                  p.platformFee
-                    ? money(p.platformFee.amountMinor, p.platformFee.currency)
-                    : fees.lamportpay
-                      ? money(fees.lamportpay.amountMinor, fees.lamportpay.currency)
-                      : "None"
-                }
-              />
-              <Row
-                k={`Sent for conversion (${p.source.currency.toUpperCase()} on Solana)`}
-                v={money(p.source.amountMinor, p.source.currency)}
-              />
-              {fees.stables
+          <Section title="Amounts">
+            <Row k="You send" v={<strong>{money(totalMinor(p), p.source.currency)}</strong>} />
+            <Row
+              k="LamportPay fee"
+              v={
+                p.platformFee
+                  ? money(p.platformFee.amountMinor, p.platformFee.currency)
+                  : fees.lamportpay
+                    ? money(fees.lamportpay.amountMinor, fees.lamportpay.currency)
+                    : "None"
+              }
+            />
+            {fees.total ? (
+              <Row k="Payout partner fee" v={money(fees.total.amountMinor, fees.total.currency)} />
+            ) : (
+              fees.stables
                 .filter((f) => BigInt(f.amountMinor) !== 0n)
                 .map((f) => (
                   <Row
                     key={f.kind}
-                    k={`Payout partner: ${feeLabel(f.kind)} fee`}
+                    k={`Partner ${feeLabel(f.kind)} fee`}
                     v={money(f.amountMinor, f.currency)}
                   />
-                ))}
-              {fees.total && (
-                <Row
-                  k="Payout partner fees (total)"
-                  v={money(fees.total.amountMinor, fees.total.currency)}
-                />
-              )}
-              <Row
-                k="Exchange rate (after partner fees)"
-                v={
-                  p.exchangeRate === null
-                    ? "—"
-                    : `1 ${p.source.currency.toUpperCase()} = ${Number(Number(p.exchangeRate).toPrecision(6))} ${p.destination.currency.toUpperCase()}`
-                }
-              />
-              <Row
-                k={received ? "Bank account received" : "Bank account receives (quoted)"}
-                v={
-                  <strong>
-                    {received
-                      ? money(p.actualPayout!.amountMinor, p.actualPayout!.currency)
-                      : money(p.destination.amountMinor, p.destination.currency)}
-                  </strong>
-                }
-              />
-              <Row
-                k="Payout currency"
-                v={(received ? p.actualPayout!.currency : p.destination.currency).toUpperCase()}
-              />
-            </Section>
-          </div>
-          <div className="space-y-5">
-            <Section title="Payment">
-              {receipt && (
-                <Row k="Payment ID" v={<span className="font-mono text-xs">{p.id}</span>} />
-              )}
-              {receipt && (
-                <Row
-                  k="Status"
-                  v={STATUS_TEXT[p.status] ?? p.status.replace(/_/g, " ").toLowerCase()}
-                />
-              )}
-              {receipt && <Row k="Created" v={new Date(p.createdAt).toLocaleString()} />}
-              {receipt && p.completedAt && (
-                <Row k="Completed" v={new Date(p.completedAt).toLocaleString()} />
-              )}
-              <Row k="Sender (verified name)" v={senderName ?? "—"} />
-            </Section>
-
-            <Section title="Bank account (your own)">
-              <Row k="Account holder" v={account.holderName ?? "—"} />
-              <Row
-                k={account.kind === "iban" ? "IBAN" : "Account number"}
-                v={<span className="font-mono">{account.number ?? "—"}</span>}
-              />
-              <Row k="Bank name" v={account.bankName ?? "—"} />
-              <Row k="Country" v={countryName(p.destination.country)} />
-            </Section>
-          </div>
+                ))
+            )}
+            <Row k="Amount converted" v={money(p.source.amountMinor, p.source.currency)} />
+            <Row
+              k="Rate"
+              v={
+                p.exchangeRate === null
+                  ? "—"
+                  : `1 ${p.source.currency.toUpperCase()} = ${Number(Number(p.exchangeRate).toPrecision(6))} ${p.destination.currency.toUpperCase()}`
+              }
+            />
+            <Row
+              k="You receive"
+              v={
+                <strong className="text-base text-uv">
+                  {money(p.destination.amountMinor, p.destination.currency)}
+                </strong>
+              }
+            />
+          </Section>
+          <Section title="To your bank account">
+            <Row k="Account holder" v={account.holderName ?? senderName ?? "—"} />
+            <Row k="Bank" v={account.bankName ?? "—"} />
+            <Row
+              k={account.kind === "iban" ? "IBAN" : "Account number"}
+              v={<span className="font-mono">{account.number ?? "—"}</span>}
+            />
+            <Row k="Country" v={countryName(p.destination.country)} />
+          </Section>
         </div>
       )}
       {receipt && (

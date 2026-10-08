@@ -6,11 +6,12 @@
  */
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { History, LogOut, Send, UserRound, Wallet } from "lucide-react";
+import { ChevronRight, History, LogOut, Send, UserRound, Wallet } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { ModeBadge } from "@/components/app/ModeBadge";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { BrandLogo } from "@/components/site/Layout";
 import { AppWalletIsland } from "@/components/site/wallet/WalletIsland";
 import { supabase } from "@/integrations/supabase/client";
@@ -88,13 +89,34 @@ export async function switchToConnectedWallet(clear: () => void) {
  * and history). Signed out: the sign-in menu (wallet or email). Signed in: a
  * small account menu (History, Sign out) — no email shown in the header.
  */
+/** Sign out of the LamportPay account and return to the converter. */
+function useSignOut(after?: () => void) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const signOut = async () => {
+    setBusy(true);
+    try {
+      await queryClient.cancelQueries();
+      queryClient.clear();
+      await supabase.auth.signOut();
+      navigate({ to: "/pay", replace: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not sign out.");
+    } finally {
+      setBusy(false);
+      after?.();
+    }
+  };
+  return { busy, signOut };
+}
+
 function Account() {
   const account = useAccount();
   const { publicKey } = useAppWallet();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const { busy, signOut } = useSignOut(() => setOpen(false));
   if (account.status === "loading") return null;
   if (account.status === "signed_out") return <SignedOutControl />;
   const differentWallet = walletLinkOf(publicKey, account.wallets) === "different_wallet";
@@ -138,20 +160,7 @@ function Account() {
             <button
               type="button"
               disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await queryClient.cancelQueries();
-                  queryClient.clear();
-                  await supabase.auth.signOut();
-                  navigate({ to: "/pay", replace: true });
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Could not sign out.");
-                } finally {
-                  setBusy(false);
-                  setOpen(false);
-                }
-              }}
+              onClick={() => void signOut()}
               className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
             >
               <LogOut className="w-4 h-4" /> Sign out
@@ -163,22 +172,140 @@ function Account() {
   );
 }
 
+/**
+ * Phones: the account lives in the bottom tab bar and opens as a sheet (wallet,
+ * history, sign in / out), so the header keeps just the logo, mode and wallet.
+ */
+function AccountSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const account = useAccount();
+  const { publicKey, signIn } = useAppWallet();
+  const queryClient = useQueryClient();
+  const close = () => onOpenChange(false);
+  const { busy, signOut } = useSignOut(close);
+  const signedIn = account.status === "signed_in";
+  const differentWallet =
+    signedIn && walletLinkOf(publicKey, account.wallets) === "different_wallet";
+  const next =
+    typeof window === "undefined" ? "/pay" : `${window.location.pathname}${window.location.search}`;
+  const row =
+    "flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left text-sm font-medium hover:bg-secondary active:bg-secondary transition-colors [-webkit-tap-highlight-color:transparent]";
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange} shouldScaleBackground={false}>
+      <DrawerContent
+        aria-describedby={undefined}
+        className="rounded-t-[28px] border-border/60 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+      >
+        <DrawerTitle className="px-6 pt-3 text-base font-semibold">Account</DrawerTitle>
+        <div className="px-3 pt-3 space-y-1">
+          <div className="flex items-center gap-3 rounded-2xl bg-secondary/60 px-4 py-3.5">
+            <span className="grid place-items-center w-9 h-9 rounded-full bg-[image:var(--gradient-hero)] text-white">
+              <Wallet className="w-4 h-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs text-muted-foreground">Wallet</span>
+              <span className={`block text-sm font-semibold ${publicKey ? "font-mono" : ""}`}>
+                {publicKey ? `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}` : "Not connected"}
+              </span>
+            </span>
+            <span className="ml-auto text-xs font-medium text-muted-foreground">
+              {signedIn ? "Signed in" : "Signed out"}
+            </span>
+          </div>
+          {signedIn ? (
+            <>
+              {differentWallet && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    close();
+                    void switchToConnectedWallet(() => queryClient.clear());
+                  }}
+                  className={`${row} text-destructive`}
+                >
+                  <Wallet className="w-4 h-4" /> Use the connected wallet
+                  <ChevronRight className="ml-auto w-4 h-4" />
+                </button>
+              )}
+              <Link to="/payments" onClick={close} className={row}>
+                <History className="w-4 h-4 text-muted-foreground" /> My conversions
+                <ChevronRight className="ml-auto w-4 h-4 text-muted-foreground" />
+              </Link>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void signOut()}
+                className={`${row} text-destructive disabled:opacity-50`}
+              >
+                <LogOut className="w-4 h-4" /> Sign out
+              </button>
+            </>
+          ) : (
+            <div className="space-y-2 px-1 pt-2">
+              <button
+                type="button"
+                disabled={signIn.phase === "signing"}
+                onClick={() => {
+                  close();
+                  requestWalletSignIn({ openPicker: !publicKey });
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[image:var(--gradient-hero)] py-3.5 text-base font-semibold text-white shadow-[var(--shadow-soft)] disabled:opacity-60"
+              >
+                <Wallet className="w-4 h-4" />
+                {signIn.phase === "signing" ? "Check your wallet…" : "Sign in with wallet"}
+              </button>
+              <Link
+                to="/auth"
+                search={{ next }}
+                onClick={close}
+                className="block py-2 text-center text-sm font-medium text-primary"
+              >
+                Use email instead
+              </Link>
+            </div>
+          )}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
 export function AppLayout({ children }: { children: ReactNode }) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const account = useAccount();
+  const { publicKey } = useAppWallet();
+  const accountAlert =
+    account.status === "signed_in" &&
+    walletLinkOf(publicKey, account.wallets) === "different_wallet";
   // overflow-x-clip, not -hidden: "hidden" makes this div a scroll container,
   // which silently breaks the sticky header and the sticky /pay side panels.
   return (
-    <div className="relative min-h-screen flex flex-col bg-background text-foreground overflow-x-clip">
-      {/* Brand backdrop: soft violet/cyan glows and a faint grid, behind everything. */}
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+    <div className="relative isolate min-h-screen flex flex-col bg-background text-foreground overflow-x-clip">
+      {/* Brand backdrop: soft violet/cyan glows, concentric brand rings in two
+          corners (gradient hairlines, like a bank's hero) and a faint grid. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_15%_-10%,oklch(0.62_0.28_295/0.14),transparent_60%),radial-gradient(ellipse_70%_50%_at_95%_0%,oklch(0.82_0.18_200/0.14),transparent_60%),radial-gradient(ellipse_60%_50%_at_50%_110%,oklch(0.7_0.28_330/0.08),transparent_60%)]" />
-        <div className="absolute inset-0 bg-grid-uv opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent_70%)]" />
+        <div className="absolute inset-0 bg-grid-uv opacity-40 [mask-image:linear-gradient(to_bottom,black,transparent_60%)]" />
+        {[
+          "right-[-260px] top-[-300px] h-[760px] w-[760px] opacity-70",
+          "right-[-150px] top-[-190px] h-[540px] w-[540px] opacity-60",
+          "right-[-40px] top-[-80px] h-[320px] w-[320px] opacity-50",
+          "left-[-300px] bottom-[-340px] h-[820px] w-[820px] opacity-50",
+          "left-[-170px] bottom-[-210px] h-[560px] w-[560px] opacity-40",
+        ].map((place) => (
+          <div
+            key={place}
+            className={`brand-ring absolute rounded-full max-sm:scale-50 ${place}`}
+          />
+        ))}
+        <div className="absolute right-[12%] top-[18%] h-64 w-64 rounded-full bg-[radial-gradient(circle,oklch(0.82_0.18_200/0.18),transparent_70%)] blur-2xl" />
+        <div className="absolute left-[8%] bottom-[10%] h-72 w-72 rounded-full bg-[radial-gradient(circle,oklch(0.62_0.28_295/0.14),transparent_70%)] blur-2xl" />
       </div>
 
       <header className="sticky top-0 z-40 bg-background/75 backdrop-blur-xl print:hidden">
-        <div className="max-w-[1440px] mx-auto px-4 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-3">
-          <div className="flex min-w-0 items-center gap-6">
+        <div className="max-w-[1440px] mx-auto px-4 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-3">
+          <div className="flex shrink-0 items-center gap-6">
             <Link to="/" aria-label="LamportPay home" className="shrink-0">
-              <BrandLogo className="h-6 sm:h-8 sm:scale-90 origin-left" />
+              <BrandLogo className="h-[22px] sm:h-8 sm:scale-90 origin-left" />
             </Link>
             <nav
               className="hidden sm:flex items-center gap-1 rounded-full border border-border/60 bg-card/70 p-1"
@@ -200,14 +327,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
               ))}
             </nav>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <ModeBadge />
             <span className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/70 px-3 py-1.5 text-xs text-muted-foreground">
               <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--neon-lime)] shadow-[0_0_8px_var(--neon-lime)]" />
               Solana
             </span>
             <AppWalletIsland />
-            <Account />
+            {/* Phones: the account is a tab in the bottom bar. */}
+            <div className="hidden sm:flex">
+              <Account />
+            </div>
             <WalletSignInFeedback />
           </div>
         </div>
@@ -235,8 +365,27 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </span>
             </Link>
           ))}
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={accountOpen}
+            onClick={() => setAccountOpen(true)}
+            data-open={accountOpen || undefined}
+            className="group flex-1 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground [-webkit-tap-highlight-color:transparent] active:scale-95 transition-transform"
+          >
+            <span className="relative grid place-items-center h-7 w-12 rounded-full transition-colors group-data-[open]:bg-primary/12 group-data-[open]:text-primary">
+              <UserRound className="w-[18px] h-[18px]" />
+              {accountAlert && (
+                <span className="absolute right-2.5 top-0.5 w-2 h-2 rounded-full bg-destructive ring-2 ring-background" />
+              )}
+            </span>
+            <span className="group-data-[open]:text-primary group-data-[open]:font-semibold">
+              Account
+            </span>
+          </button>
         </div>
       </nav>
+      <AccountSheet open={accountOpen} onOpenChange={setAccountOpen} />
     </div>
   );
 }

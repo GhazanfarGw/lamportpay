@@ -5,7 +5,7 @@
  * converter, summary. Phones get app-style pieces: pickers open as bottom
  * sheets and the primary action sits in a bar above the tab bar. Presentation only.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
@@ -25,62 +25,73 @@ import { useIsMobile } from "@/hooks/use-mobile";
 
 export function DappWorkspace({
   rail,
+  progress,
   main,
   aside,
 }: {
-  /** The journey rail. Omitted on the opening quote screen, which is converter + costs only. */
+  /** The journey rail (lg+). Omitted on the opening quote screen, which is converter + costs only. */
   rail?: ReactNode;
+  /** Phones and tablets: the journey as a slim bar pinned under the header. */
+  progress?: ReactNode;
   main: ReactNode;
   aside?: ReactNode;
 }) {
   return (
-    // Phones: room at the bottom for a docked action (MobileDock), when the page has one.
-    <div
-      className={`${rail ? "max-w-[1440px]" : "max-w-[1160px]"} mx-auto px-4 lg:px-8 py-5 lg:py-8 max-sm:has-[[data-mobile-dock]]:pb-40`}
-    >
+    <>
+      {progress && (
+        // Sticky under the app header (56px / 64px tall plus its 1px gradient line).
+        <div className="lg:hidden sticky top-[57px] sm:top-[65px] z-30 border-b border-border/50 bg-background/85 backdrop-blur-xl print:hidden">
+          <div className="max-w-[760px] mx-auto px-4 py-2.5">{progress}</div>
+        </div>
+      )}
+      {/* Phones: room at the bottom for a docked action (MobileDock), when the page has one. */}
       <div
-        className={`grid gap-5 lg:gap-6 ${
-          rail
-            ? "lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_minmax(340px,400px)]"
-            : "lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]"
-        }`}
+        className={`${rail ? "max-w-[1440px]" : "max-w-[1160px]"} mx-auto px-4 lg:px-8 py-4 lg:py-8 max-sm:has-[[data-mobile-dock]]:pb-[calc(var(--dock-h,9rem)+1.5rem)]`}
       >
-        {/* Side panels stay in view while the centre scrolls (sticky below the
-            64px header). A panel taller than the window scrolls on its own. */}
-        {rail && (
-          <aside className="lg:sticky lg:top-20 self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:none]">
-            {rail}
-          </aside>
-        )}
-        <section className="min-w-0 space-y-5">{main}</section>
-        {aside && (
-          <aside
-            className={`min-w-0 self-start [scrollbar-width:none] space-y-4 ${
-              rail
-                ? "lg:col-start-2 xl:col-start-auto xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:overscroll-contain"
-                : "lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain"
-            }`}
-          >
-            {aside}
-          </aside>
-        )}
+        <div
+          className={`grid gap-4 lg:gap-6 ${
+            rail
+              ? "lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_minmax(340px,400px)]"
+              : "lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)]"
+          }`}
+        >
+          {/* Side panels stay in view while the centre scrolls (sticky below the
+              64px header). A panel taller than the window scrolls on its own. */}
+          {rail && (
+            <aside className="hidden lg:block lg:sticky lg:top-20 self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain [scrollbar-width:none]">
+              {rail}
+            </aside>
+          )}
+          <section className="min-w-0 space-y-4 lg:space-y-5">{main}</section>
+          {aside && (
+            <aside
+              className={`min-w-0 self-start [scrollbar-width:none] space-y-4 ${
+                rail
+                  ? "lg:col-start-2 xl:col-start-auto xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:overscroll-contain"
+                  : "lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:overscroll-contain"
+              }`}
+            >
+              {aside}
+            </aside>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
 /** The rail's frame: title, the stepper, and an optional footer. */
 export function RailCard({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="lg:rounded-3xl lg:border lg:border-border/60 lg:bg-card/70 lg:backdrop-blur-xl lg:p-5 lg:shadow-[var(--shadow-soft)] lg:space-y-5">
-      <div className="hidden lg:block">
+    <div className="rounded-3xl border border-border/60 bg-card/70 backdrop-blur-xl p-5 shadow-[var(--shadow-soft)] space-y-5">
+      <div>
         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           Your conversion
         </div>
         <div className="h-0.5 w-10 mt-2 rounded-full bg-[image:var(--gradient-uv)]" />
       </div>
       {children}
-      {footer && <div className="hidden lg:block border-t border-border/60 pt-4">{footer}</div>}
+      {footer && <div className="border-t border-border/60 pt-4">{footer}</div>}
     </div>
   );
 }
@@ -262,6 +273,22 @@ function useIsPhone() {
  */
 export function MobileDock({ children, className }: { children: ReactNode; className?: string }) {
   const phone = useIsPhone();
+  const dock = useRef<HTMLDivElement>(null);
+  // The page leaves exactly the dock's height free at the bottom (--dock-h), so
+  // the last line of content never hides behind a taller dock.
+  useEffect(() => {
+    const el = dock.current;
+    if (!phone || !el) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() =>
+      root.style.setProperty("--dock-h", `${Math.ceil(el.getBoundingClientRect().height)}px`),
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--dock-h");
+    };
+  }, [phone]);
   if (!phone) return <div className={className}>{children}</div>;
   return (
     <>
@@ -269,6 +296,7 @@ export function MobileDock({ children, className }: { children: ReactNode; class
       <span data-mobile-dock hidden />
       {createPortal(
         <div
+          ref={dock}
           className={cn(
             "fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-border/60 bg-background/95 backdrop-blur-xl px-4 py-3 shadow-[0_-12px_30px_-18px_oklch(0.52_0.22_275/0.35)] print:hidden",
             className,

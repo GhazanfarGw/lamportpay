@@ -16,6 +16,9 @@ export class PaymentError extends Error {
       held?: string;
       needed?: string;
       solNeeded?: string;
+      /** TEST MODE: an amount the payout partner's sandbox accepts, to start again with. */
+      retryAmount?: string;
+      retryCountry?: string;
     },
   ) {
     super(message);

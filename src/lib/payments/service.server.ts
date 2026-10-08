@@ -90,7 +90,7 @@ import {
 } from "./view";
 
 import { PaymentError, type FieldIssue } from "./errors";
-import { platformFee as computePlatformFee } from "./fee-math";
+import { platformFee as computePlatformFee, type FeeModel } from "./fee-math";
 import {
   appendFeeLedger,
   expectedFeeEntries,
@@ -1474,12 +1474,25 @@ export async function createPaymentTransfer(
           e.status,
           `correlation_id=${e.correlationId ?? "-"}`,
         );
+        // Every GBP transfer the sandbox completed converted exactly 100.00; every one it
+        // refused converted an amount that is not a multiple of 20 (9.26, 19.60, 49.00,
+        // 56.84, 78.40, 100.94, 102.04). Since the fee comes out of the amount entered
+        // (2 Oct), round entries convert odd amounts, so offer the nearest entry whose
+        // converted amount is the next multiple of 20.
+        const retry =
+          payment.destination_currency.toLowerCase() === "gbp"
+            ? sandboxRetryTotal(payment, sourceCurrency)
+            : null;
         throw new PaymentError(
-          `The payout partner's test system could not create this transfer (error ${e.status}). ` +
-            "Its sandbox only accepts some amounts: for GBP, the amount converted must be a " +
-            "multiple of 20 USDC. Start a new payment with a different amount, or another currency.",
+          retry
+            ? `The payout partner's sandbox only creates GBP transfers when the amount converted is a multiple of 20 ${label(sourceCurrency)} (this one converts ${groupThousands(toMajor(BigInt(payment.source_amount_minor), sourceCurrency))}). ` +
+                `Start again with ${retry.total} ${label(sourceCurrency)}: ${retry.net} is converted after the LamportPay fee. TEST MODE only; production has no such rule.`
+            : `The payout partner's test system could not create this transfer (error ${e.status}). Start a new payment with a different amount, or another currency.`,
           502,
           "stables_sandbox_error",
+          retry
+            ? { retryAmount: retry.total, retryCountry: payment.destination_country.toUpperCase() }
+            : undefined,
         );
       }
     }
@@ -2498,4 +2511,28 @@ async function pruneRateLimits(): Promise<void> {
   } catch (e) {
     console.warn("[reconcile] rate-limit prune skipped:", e instanceof Error ? e.message : e);
   }
+}
+
+/**
+ * TEST MODE help for the Stables sandbox's GBP rule (see createPaymentTransfer):
+ * the amount to enter so that what is converted, after this payment's own
+ * LamportPay fee model, is the next multiple of 20 of the coin.
+ */
+function sandboxRetryTotal(
+  payment: PaymentRow,
+  currency: PaymentCurrency,
+): { total: string; net: string } | null {
+  const step = toMinor("20", currency);
+  const net = BigInt(payment.source_amount_minor);
+  if (net <= 0n) return null;
+  const target = ((net + step - 1n) / step) * step;
+  const model: FeeModel = {
+    bps: BigInt(payment.platform_fee_bps ?? 0),
+    minMinor:
+      payment.platform_fee_min_minor === null ? null : BigInt(payment.platform_fee_min_minor),
+    maxMinor:
+      payment.platform_fee_max_minor === null ? null : BigInt(payment.platform_fee_max_minor),
+  };
+  const total = target + computePlatformFee(target, model).minor;
+  return { total: toMajor(total, currency), net: toMajor(target, currency) };
 }
