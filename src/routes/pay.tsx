@@ -36,7 +36,6 @@ import {
   Skeleton,
   type PickerOption,
 } from "@/components/app/DappWorkspace";
-import { useScrollToStep } from "@/hooks/use-scroll-to-step";
 import { Flag } from "@/components/app/Flag";
 import { TokenIcon } from "@/components/app/TokenIcon";
 import { PaymentReceipt } from "@/components/site/PaymentReceipt";
@@ -560,6 +559,8 @@ function ConvertForm({
   const [country, setCountry] = useState(initialCountry);
   // What the user pays with: the stablecoin itself, or SOL swapped to it by Jupiter.
   const [payWith, setPayWith] = useState<"coin" | "sol">("coin");
+  // Step 1 is the converter alone; "Get quote" slides the quote panel in (step 2).
+  const [showQuote, setShowQuote] = useState(Boolean(initialAmount && initialCountry));
   const mode = useModeStatus();
   const testMode = mode.status?.mode === "test";
 
@@ -855,6 +856,30 @@ function ConvertForm({
     </button>
   );
 
+  const canQuote =
+    Boolean(destination) && typedMinor !== null && typedMinor > 0n && !belowMin && !aboveMax;
+  const quoteLabel =
+    !typedMinor || typedMinor <= 0n
+      ? "Enter an amount"
+      : !destination
+        ? "Choose where to get paid"
+        : belowMin
+          ? `Minimum ${grouped(minSendMajor ?? "0")} ${coinKey.toUpperCase()}`
+          : aboveMax
+            ? `Maximum ${grouped(maxSendMajor ?? "0")} ${coinKey.toUpperCase()}`
+            : "Get quote";
+  const quoteButton = (className: string) => (
+    <button
+      type="button"
+      onClick={() => setShowQuote(true)}
+      disabled={!canQuote}
+      className={cn(PRIMARY, className)}
+    >
+      {quoteLabel}
+      {canQuote && <ArrowRight className="w-4 h-4" />}
+    </button>
+  );
+
   const main = (
     <>
       {notices}
@@ -862,7 +887,8 @@ function ConvertForm({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            submit();
+            if (showQuote) submit();
+            else if (canQuote) setShowQuote(true);
           }}
           className="p-4 sm:p-6 lg:p-7 space-y-3"
         >
@@ -930,7 +956,7 @@ function ConvertForm({
                 placeholder={paySol ? "0.0" : (limits?.min ?? "0")}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                className="w-full min-w-0 bg-transparent text-4xl sm:text-5xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40 tabular-nums"
+                className="w-full min-w-0 bg-transparent text-5xl sm:text-6xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/40 tabular-nums"
               />
               {single ? (
                 <Picker
@@ -1051,7 +1077,9 @@ function ConvertForm({
           </div>
 
           {/* Tablets; phones use the action bar, lg+ the costs panel beside the converter. */}
-          {ctaButton("hidden sm:flex lg:hidden w-full justify-center py-4 text-base mt-2")}
+          {showQuote
+            ? ctaButton("hidden sm:flex lg:hidden w-full justify-center py-4 text-base mt-2")
+            : quoteButton("hidden sm:flex w-full justify-center py-4 text-base mt-3")}
           {needsSignIn && (
             <div className="lg:hidden">
               <EmailSignInHint next={emailSignInNext} />
@@ -1070,6 +1098,30 @@ function ConvertForm({
         </form>
       </GlowCard>
       {signedIn && <KycCard compact />}
+      <MobileDock className="sm:hidden">
+        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">You receive</span>
+          <span
+            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
+          >
+            {priced ? (
+              <>
+                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
+                <span className="font-semibold text-muted-foreground">{currency}</span>
+              </>
+            ) : estimate.isFetching ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <span className="text-muted-foreground">
+                {destination ? "Enter an amount" : "Choose a country"}
+              </span>
+            )}
+          </span>
+        </div>
+        {showQuote
+          ? ctaButton("flex w-full justify-center py-3.5 text-base")
+          : quoteButton("flex w-full justify-center py-3.5 text-base")}
+      </MobileDock>
     </>
   );
 
@@ -1305,32 +1357,32 @@ function ConvertForm({
       <div className="px-1">
         <TrustList />
       </div>
-      <MobileDock className="sm:hidden">
-        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
-          <span className="text-muted-foreground">You receive</span>
-          <span
-            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
-          >
-            {priced ? (
-              <>
-                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
-                <span className="font-semibold text-muted-foreground">{currency}</span>
-              </>
-            ) : estimate.isFetching ? (
-              <Skeleton className="h-4 w-24" />
-            ) : (
-              <span className="text-muted-foreground">
-                {destination ? "Enter an amount" : "Choose a country"}
-              </span>
-            )}
-          </span>
-        </div>
-        {ctaButton("flex w-full justify-center py-3.5 text-base")}
-      </MobileDock>
     </>
   );
 
-  return <DappWorkspace main={main} aside={aside} />;
+  return (
+    <div className="max-w-[1180px] mx-auto px-4 lg:px-8 py-5 lg:py-10 max-sm:has-[[data-mobile-dock]]:pb-40">
+      <div
+        className={`grid gap-y-5 lg:justify-center lg:transition-[grid-template-columns,column-gap] lg:duration-500 lg:ease-out ${
+          showQuote
+            ? "lg:grid-cols-[minmax(0,660px)_400px] lg:gap-x-6"
+            : "lg:grid-cols-[minmax(0,720px)_0px] lg:gap-x-0"
+        }`}
+      >
+        <section className="min-w-0 space-y-5">{main}</section>
+        <aside
+          inert={!showQuote}
+          className={`min-w-0 self-start lg:overflow-hidden transition-[opacity,transform] duration-500 ease-out ${
+            showQuote
+              ? "opacity-100 translate-x-0"
+              : "max-lg:hidden opacity-0 lg:translate-x-8 pointer-events-none"
+          }`}
+        >
+          <div className="lg:w-[400px] space-y-4">{aside}</div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function CostRow({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
@@ -1395,14 +1447,6 @@ function PaymentPanel({
     quote.mutate();
   }, [unquoted, quote]);
 
-  // When the payment moves on (transfer created, payment detected, completed,
-  // wallet check), bring the new action into view instead of leaving it below.
-  const actionRef = useRef<HTMLDivElement>(null);
-  useScrollToStep(
-    p ? `${p.status}|${p.testPayment ? 1 : 0}|${p.travelRule?.status ?? ""}` : "",
-    actionRef,
-  );
-
   // No payment yet: only an actual error is shown as one. A query that is still
   // pending (including one paused while the browser is offline, e.g. right
   // after the computer wakes from sleep) keeps the skeleton; it used to fall
@@ -1444,6 +1488,17 @@ function PaymentPanel({
     p.status,
   );
   const walletCheck = p.travelRule?.status === "required" || p.travelRule?.status === "expired";
+  // Coarse phase of the flow; the action area slides to the next phase when it
+  // changes (not on every status tick, so an open wallet approval is never reset).
+  const phase = preTransfer
+    ? "setup"
+    : p.status === "COMPLETED"
+      ? "done"
+      : p.terminal
+        ? "ended"
+        : FUNDABLE.has(p.status) && !p.testPayment && !p.funding
+          ? "pay"
+          : "processing";
   // TEST MODE: the devnet payment was detected; Stables (sandbox) now processes.
   const detected = Boolean(p.testPayment) && FUNDABLE.has(p.status);
 
@@ -1601,7 +1656,7 @@ function PaymentPanel({
             </Notice>
           )}
 
-          {preTransfer && (
+          {preTransfer && (p.status !== "QUOTED" || quoteExpired) && (
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => quote.mutate()}
@@ -1620,6 +1675,10 @@ function PaymentPanel({
               )}
             </div>
           )}
+          {/* A valid quote: just its timer here; refreshing lives with Pay Now. */}
+          {p.status === "QUOTED" && !quoteExpired && p.quote?.expiresAt && (
+            <QuoteExpiry expiresAt={p.quote.expiresAt} />
+          )}
           {quote.error && <ErrorText error={quote.error} />}
         </div>
       </GlowCard>
@@ -1629,88 +1688,89 @@ function PaymentPanel({
       {preTransfer && p.settlement && p.settlement.kind !== "funds_ready" && (
         <SettlementCard payment={p} stablesMode={stablesMode} onChanged={setPayment} />
       )}
-      <div ref={actionRef} />
-      {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
-      {p.status === "QUOTED" && (
-        <CheckoutFlow
-          payment={p}
-          kyc={kyc.data}
-          testMode={testMode}
-          onRefreshQuote={() => quote.mutate()}
-          refreshingQuote={quote.isPending}
-          onChanged={setPayment}
-        />
-      )}
-      {/* TEST MODE: the transfer exists but the payment wasn't made yet (e.g. a
+      <div key={phase} className="space-y-5 animate-in fade-in slide-in-from-right-6 duration-300">
+        {walletCheck && <TravelRuleCard payment={p} onCheck={() => void payment.refetch()} />}
+        {p.status === "QUOTED" && (
+          <CheckoutFlow
+            payment={p}
+            kyc={kyc.data}
+            testMode={testMode}
+            onRefreshQuote={() => quote.mutate()}
+            refreshingQuote={quote.isPending}
+            onChanged={setPayment}
+          />
+        )}
+        {/* TEST MODE: the transfer exists but the payment wasn't made yet (e.g. a
           rejected wallet approval or a reload): Pay Now again, same payment. */}
-      {testMode && p.transferId && FUNDABLE.has(p.status) && !p.testPayment && (
-        <Card>
-          <div className="font-semibold">Pay now</div>
-          <p className="text-sm text-muted-foreground">
-            Your transfer is ready. Approve the payment in your wallet to continue.
-          </p>
-          <MobileDock>
-            <TestPayIsland
-              paymentId={p.id}
-              expectedWallet={p.settlement?.wallet ?? null}
-              autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
-              onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
-              label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
-              onPaid={setPayment}
-            />
-          </MobileDock>
-        </Card>
-      )}
-      {p.testPayment && (
-        <Card>
-          <div className="flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
-            Payment detected on Solana devnet
-            <span className="rounded-full bg-[color:var(--warning)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--warning)]">
-              Devnet · partner sandbox
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            TEST MODE: your wallet signed a devnet transaction for this payment (no funds moved),
-            and the payout partner's sandbox received the simulated deposit. The status above
-            follows the payout partner.
-          </p>
-          <a
-            href={p.testPayment.explorerUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-          >
-            View transaction <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </Card>
-      )}
-      {!testMode && p.deposit && FUNDABLE.has(p.status) && !p.funding && (
-        <DepositCard payment={p} onFunded={() => void payment.refetch()} />
-      )}
-      {p.status === "COMPLETED" && (
-        <div className="rounded-3xl p-px bg-[image:var(--gradient-hero)] shadow-[var(--shadow-elegant)]">
-          <div className="rounded-[23px] bg-card p-6 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="grid place-items-center w-10 h-10 rounded-full bg-[color:var(--success)]/15">
-                <CheckCircle2 className="w-6 h-6 text-[color:var(--success)]" />
+        {testMode && p.transferId && FUNDABLE.has(p.status) && !p.testPayment && (
+          <Card>
+            <div className="font-semibold">Pay now</div>
+            <p className="text-sm text-muted-foreground">
+              Your transfer is ready. Approve the payment in your wallet to continue.
+            </p>
+            <MobileDock>
+              <TestPayIsland
+                paymentId={p.id}
+                expectedWallet={p.settlement?.wallet ?? null}
+                autoStart={queryClient.getQueryData<boolean>(["autopay", p.id]) === true}
+                onAutoStarted={() => queryClient.removeQueries({ queryKey: ["autopay", p.id] })}
+                label={`Pay now · ${p.totalToPay.amount} ${p.totalToPay.currency.toUpperCase()}`}
+                onPaid={setPayment}
+              />
+            </MobileDock>
+          </Card>
+        )}
+        {p.testPayment && (
+          <Card>
+            <div className="flex items-center gap-2 font-semibold">
+              <CheckCircle2 className="w-5 h-5 text-[color:var(--success)]" />
+              Payment detected on Solana devnet
+              <span className="rounded-full bg-[color:var(--warning)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--warning)]">
+                Devnet · partner sandbox
               </span>
-              <div>
-                <div className="font-semibold">Paid into your bank account</div>
-                <div className="text-xs text-muted-foreground">
-                  Your receipt has the amounts, fees and on-chain links.
+            </div>
+            <p className="text-sm text-muted-foreground">
+              TEST MODE: your wallet signed a devnet transaction for this payment (no funds moved),
+              and the payout partner's sandbox received the simulated deposit. The status above
+              follows the payout partner.
+            </p>
+            <a
+              href={p.testPayment.explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              View transaction <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </Card>
+        )}
+        {!testMode && p.deposit && FUNDABLE.has(p.status) && !p.funding && (
+          <DepositCard payment={p} onFunded={() => void payment.refetch()} />
+        )}
+        {p.status === "COMPLETED" && (
+          <div className="rounded-3xl p-px bg-[image:var(--gradient-hero)] shadow-[var(--shadow-elegant)]">
+            <div className="rounded-[23px] bg-card p-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="grid place-items-center w-10 h-10 rounded-full bg-[color:var(--success)]/15">
+                  <CheckCircle2 className="w-6 h-6 text-[color:var(--success)]" />
+                </span>
+                <div>
+                  <div className="font-semibold">Paid into your bank account</div>
+                  <div className="text-xs text-muted-foreground">
+                    Your receipt has the amounts, fees and on-chain links.
+                  </div>
                 </div>
               </div>
+              <MobileDock>
+                <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
+                  View receipt <ArrowRight className="w-4 h-4" />
+                </Link>
+              </MobileDock>
             </div>
-            <MobileDock>
-              <Link to="/payments/$id" params={{ id: p.id }} className={PRIMARY}>
-                View receipt <ArrowRight className="w-4 h-4" />
-              </Link>
-            </MobileDock>
           </div>
-        </div>
-      )}
-      {!preTransfer && history}
+        )}
+        {!preTransfer && history}
+      </div>
     </>
   );
 
@@ -2196,10 +2256,26 @@ function CheckoutFlow({
   };
   const liveTransfer = useMutation({ mutationFn: createTransfer });
 
-  // details → verify → review: after each step completes, the next one comes into view.
-  const stage = !checked ? "details" : !verified ? "verify" : "review";
-  const stageRef = useRef<HTMLDivElement>(null);
-  useScrollToStep(stage, stageRef);
+  // One step at a time: details → verify → review. A finished step leaves the
+  // screen and the next one slides in where it was (no scrolling); "Back" returns
+  // to the checked details (read-only, with Edit).
+  const [back, setBack] = useState(false);
+  const stage: keyof typeof STAGE_ORDER =
+    !checked || back ? "details" : !verified ? "verify" : "review";
+  const previousStage = useRef(stage);
+  const forward = STAGE_ORDER[stage] >= STAGE_ORDER[previousStage.current];
+  useEffect(() => {
+    previousStage.current = stage;
+  }, [stage]);
+  const backButton = (
+    <button
+      type="button"
+      onClick={() => setBack(true)}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition"
+    >
+      <ArrowLeft className="w-4 h-4" /> Back to your details
+    </button>
+  );
 
   const quoteValid =
     payment.quote?.expiresAt !== null &&
@@ -2211,101 +2287,136 @@ function CheckoutFlow({
   const canPay = Boolean(checked) && verified && quoteValid && fundsReady;
 
   return (
-    <>
-      {stage === "details" && <div ref={stageRef} />}
-      <PayoutDetailsStep
-        payment={payment}
-        kyc={kyc}
-        checked={checked}
-        onChecked={setChecked}
-        onEdit={() => setChecked(null)}
-      />
-      {stage !== "details" && <div ref={stageRef} />}
-      {checked && !verified && <VerificationGate kyc={kyc} />}
-      {checked && verified && (
-        <PaymentReceipt
-          payment={payment}
-          mode="summary"
-          senderName={kyc?.verifiedName ?? checked.holderName}
-          account={{
-            holderName: kyc?.verifiedName ?? checked.holderName,
-            bankName: checked.beneficiary.bankName,
-            kind: "account_number",
-            number: checked.beneficiary.accountNumber,
-          }}
-          footer={
-            // Two siblings, both direct children of the summary card: the notes, then
-            // the quote timer + Pay Now strip, which stays on screen (sticky) on tablets
-            // and desktop while the summary above is read. Phones dock it instead.
-            <>
-              <div className="space-y-3 border-t border-border/50 pt-4">
-                {!quoteValid && (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Notice tone="warn">The quote expired. Refresh it to see today's rate.</Notice>
-                    <button
-                      type="button"
-                      onClick={onRefreshQuote}
-                      disabled={refreshingQuote}
-                      className={SECONDARY}
-                    >
-                      {refreshingQuote && <Loader2 className="w-4 h-4 animate-spin" />}
-                      Refresh quote
-                    </button>
-                  </div>
-                )}
-                <Notice tone="info">
-                  {OWN_ACCOUNT_MESSAGE} Check the account number: a payout to a wrong account may
-                  not be recoverable.
-                </Notice>
-                {!fundsReady && (
-                  <Notice tone="warn">
-                    {payment.settlement?.reason ?? "Your wallet balance hasn't been checked yet."}{" "}
-                    {testMode
-                      ? "In TEST MODE swaps can't run: add devnet test USDC to this wallet (Circle faucet), then use “Check my wallet again”."
-                      : "Complete the step above first; Pay Now unlocks when your wallet holds the full amount."}
-                  </Notice>
-                )}
-              </div>
-              <div className="sm:sticky sm:bottom-4 sm:z-20 sm:-mx-2 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-card/95 sm:p-3 sm:shadow-[var(--shadow-elegant)] sm:backdrop-blur-xl space-y-2">
-                {payment.quote?.expiresAt && <QuoteExpiry expiresAt={payment.quote.expiresAt} />}
-                {testMode ? (
-                  <MobileDock>
-                    <TestPayIsland
-                      paymentId={payment.id}
-                      prepare={createTransfer}
-                      disabled={!canPay}
-                      expectedWallet={payment.settlement?.wallet ?? null}
-                      label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
-                      onPaid={onChanged}
-                    />
-                  </MobileDock>
-                ) : (
-                  <MobileDock className="space-y-3 max-sm:space-y-2">
-                    <button
-                      type="button"
-                      disabled={!canPay || liveTransfer.isPending}
-                      onClick={() => liveTransfer.mutate()}
-                      className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
-                    >
-                      {liveTransfer.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-                      Pay now · {payment.totalToPay.amount}{" "}
-                      {payment.totalToPay.currency.toUpperCase()}
-                    </button>
-                    <p className="text-xs text-muted-foreground">
-                      Next, your wallet asks you to approve the payment. Nothing moves until you
-                      approve.
-                    </p>
-                    {liveTransfer.error && <ErrorText error={liveTransfer.error} />}
-                  </MobileDock>
-                )}
-              </div>
-            </>
-          }
-        />
+    <div
+      key={stage}
+      className={`space-y-4 animate-in fade-in duration-300 ${forward ? "slide-in-from-right-6" : "slide-in-from-left-6"}`}
+    >
+      {stage === "details" && (
+        <>
+          <PayoutDetailsStep
+            payment={payment}
+            kyc={kyc}
+            checked={checked}
+            onChecked={(c) => {
+              setChecked(c);
+              setBack(false);
+            }}
+            onEdit={() => {
+              setChecked(null);
+              setBack(false);
+            }}
+          />
+          {checked && (
+            <MobileDock>
+              <button
+                type="button"
+                onClick={() => setBack(false)}
+                className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
+              >
+                {verified ? "Continue to review" : "Continue to verification"}
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </MobileDock>
+          )}
+        </>
       )}
-    </>
+      {stage === "verify" && (
+        <>
+          {backButton}
+          <VerificationGate kyc={kyc} />
+        </>
+      )}
+      {stage === "review" && checked && (
+        <>
+          {backButton}
+          <PaymentReceipt
+            payment={payment}
+            mode="summary"
+            senderName={kyc?.verifiedName ?? checked.holderName}
+            account={{
+              holderName: kyc?.verifiedName ?? checked.holderName,
+              bankName: checked.beneficiary.bankName,
+              kind: "account_number",
+              number: checked.beneficiary.accountNumber,
+            }}
+            footer={
+              // Two siblings, both direct children of the summary card: the notes, then
+              // the quote timer + Pay Now strip, which stays on screen (sticky) on tablets
+              // and desktop while the summary above is read. Phones dock it instead.
+              <>
+                <div className="space-y-3 border-t border-border/50 pt-4">
+                  {!quoteValid && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Notice tone="warn">
+                        The quote expired. Refresh it to see today's rate.
+                      </Notice>
+                      <button
+                        type="button"
+                        onClick={onRefreshQuote}
+                        disabled={refreshingQuote}
+                        className={SECONDARY}
+                      >
+                        {refreshingQuote && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Refresh quote
+                      </button>
+                    </div>
+                  )}
+                  <Notice tone="info">
+                    {OWN_ACCOUNT_MESSAGE} Check the account number: a payout to a wrong account may
+                    not be recoverable.
+                  </Notice>
+                  {!fundsReady && (
+                    <Notice tone="warn">
+                      {payment.settlement?.reason ?? "Your wallet balance hasn't been checked yet."}{" "}
+                      {testMode
+                        ? "In TEST MODE swaps can't run: add devnet test USDC to this wallet (Circle faucet), then use “Check my wallet again”."
+                        : "Complete the step above first; Pay Now unlocks when your wallet holds the full amount."}
+                    </Notice>
+                  )}
+                </div>
+                <div className="sm:sticky sm:bottom-4 sm:z-20 sm:-mx-2 sm:rounded-2xl sm:border sm:border-border/60 sm:bg-card/95 sm:p-3 sm:shadow-[var(--shadow-elegant)] sm:backdrop-blur-xl space-y-2">
+                  {payment.quote?.expiresAt && <QuoteExpiry expiresAt={payment.quote.expiresAt} />}
+                  {testMode ? (
+                    <MobileDock>
+                      <TestPayIsland
+                        paymentId={payment.id}
+                        prepare={createTransfer}
+                        disabled={!canPay}
+                        expectedWallet={payment.settlement?.wallet ?? null}
+                        label={`Pay now · ${payment.totalToPay.amount} ${payment.totalToPay.currency.toUpperCase()}`}
+                        onPaid={onChanged}
+                      />
+                    </MobileDock>
+                  ) : (
+                    <MobileDock className="space-y-3 max-sm:space-y-2">
+                      <button
+                        type="button"
+                        disabled={!canPay || liveTransfer.isPending}
+                        onClick={() => liveTransfer.mutate()}
+                        className={`${PRIMARY} w-full justify-center py-3.5 text-base`}
+                      >
+                        {liveTransfer.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Pay now · {payment.totalToPay.amount}{" "}
+                        {payment.totalToPay.currency.toUpperCase()}
+                      </button>
+                      <p className="text-xs text-muted-foreground">
+                        Next, your wallet asks you to approve the payment. Nothing moves until you
+                        approve.
+                      </p>
+                      {liveTransfer.error && <ErrorText error={liveTransfer.error} />}
+                    </MobileDock>
+                  )}
+                </div>
+              </>
+            }
+          />
+        </>
+      )}
+    </div>
   );
 }
+
+const STAGE_ORDER = { details: 0, verify: 1, review: 2 } as const;
 
 /** One step for personal + payout details; only what Stables needs for this currency. */
 function PayoutDetailsStep({
