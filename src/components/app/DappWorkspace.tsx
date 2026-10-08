@@ -5,8 +5,11 @@
  * converter, summary. Phones get app-style pieces: pickers open as bottom
  * sheets and the primary action sits in a bar above the tab bar. Presentation only.
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
+
+import { cn } from "@/lib/utils";
 
 import {
   Command,
@@ -30,7 +33,8 @@ export function DappWorkspace({
   aside?: ReactNode;
 }) {
   return (
-    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-5 lg:py-8">
+    // Phones: room at the bottom for a docked action (MobileDock), when the page has one.
+    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-5 lg:py-8 max-sm:has-[[data-mobile-dock]]:pb-40">
       <div className="grid gap-5 lg:gap-6 lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_minmax(340px,400px)]">
         {/* Both side panels stay in view while the centre scrolls (sticky below the
             64px header). A panel taller than the window scrolls on its own. */}
@@ -216,18 +220,88 @@ export function Picker({
   );
 }
 
+/** Below Tailwind's `sm` (640px): where the bottom tab bar is shown. */
+function useIsPhone() {
+  const [phone, setPhone] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 639px)");
+    const onChange = () => setPhone(mql.matches);
+    mql.addEventListener("change", onChange);
+    onChange();
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return phone;
+}
+
 /**
- * Phones only: the page's primary action, pinned above the bottom tab bar so
- * it stays in thumb reach while the form scrolls. Renders a spacer so the
- * page's last content is never hidden behind it.
+ * The page's primary action. On phones it is docked above the bottom tab bar,
+ * in thumb reach while the page scrolls; from sm up it stays where it is
+ * rendered. On phones it is portalled to <body>: the cards use backdrop-filter,
+ * which would otherwise pin a fixed child to the card instead of the screen.
+ * The children mount once either way. Show at most one dock per screen; a
+ * submit button inside needs a `form` attribute, as it leaves its form.
  */
-export function MobileActionBar({ children }: { children: ReactNode }) {
+export function MobileDock({ children, className }: { children: ReactNode; className?: string }) {
+  const phone = useIsPhone();
+  if (!phone) return <div className={className}>{children}</div>;
   return (
     <>
-      <div aria-hidden className="h-32 sm:hidden" />
-      <div className="sm:hidden fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-border/60 bg-background/90 backdrop-blur-xl px-4 pt-3 pb-3 shadow-[0_-12px_30px_-18px_oklch(0.52_0.22_275/0.35)] print:hidden">
-        {children}
-      </div>
+      {/* Marker: DappWorkspace leaves room at the bottom for the dock. */}
+      <span data-mobile-dock hidden />
+      {createPortal(
+        <div
+          className={cn(
+            "fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-border/60 bg-background/95 backdrop-blur-xl px-4 py-3 shadow-[0_-12px_30px_-18px_oklch(0.52_0.22_275/0.35)] print:hidden",
+            className,
+          )}
+        >
+          {children}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/**
+ * Phones: a section folded to one tappable row (title + a short summary) so
+ * the step that needs the user stays near the top. From sm up it is always open.
+ */
+export function MobileCollapse({
+  title,
+  summary,
+  children,
+  enabled = true,
+}: {
+  title: ReactNode;
+  summary?: ReactNode;
+  children: ReactNode;
+  /** False: always open, no fold row (e.g. once the section is what matters). */
+  enabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!enabled) return <>{children}</>;
+  return (
+    <>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="sm:hidden flex w-full items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/90 px-4 py-3.5 text-left shadow-[var(--shadow-soft)] [-webkit-tap-highlight-color:transparent] active:scale-[0.99] transition-transform"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">{title}</span>
+          {summary && (
+            <span className="block truncate text-xs text-muted-foreground">{summary}</span>
+          )}
+        </span>
+        <ChevronDown
+          className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <div className={open ? undefined : "max-sm:hidden"}>{children}</div>
     </>
   );
 }
