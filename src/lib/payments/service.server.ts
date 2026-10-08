@@ -323,7 +323,8 @@ export async function assertPaymentsOpen(
   let settings;
   try {
     settings = await getBusinessSettings();
-  } catch {
+  } catch (e) {
+    console.error("[payments] business settings:", e instanceof Error ? e.message : e);
     throw new PaymentError("Payments are temporarily unavailable.", 503, "settings_unavailable");
   }
   const refusal = pauseRefusal(
