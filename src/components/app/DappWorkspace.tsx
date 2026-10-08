@@ -2,7 +2,8 @@
  * Layout pieces for the conversion app (/pay): a wide workspace with the
  * journey rail on the left, the main converter in the centre and the cost
  * summary on the right (xl+). Below lg everything stacks: compact progress,
- * converter, summary. Presentation only.
+ * converter, summary. Phones get app-style pieces: pickers open as bottom
+ * sheets and the primary action sits in a bar above the tab bar. Presentation only.
  */
 import { useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
@@ -15,7 +16,9 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export function DappWorkspace({
   rail,
@@ -48,7 +51,7 @@ export function DappWorkspace({
 /** The rail's frame: title, the stepper, and an optional footer. */
 export function RailCard({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="lg:rounded-3xl lg:border lg:border-border/60 lg:bg-card/70 lg:backdrop-blur-xl lg:p-5 lg:shadow-[var(--shadow-soft)] space-y-5">
+    <div className="lg:rounded-3xl lg:border lg:border-border/60 lg:bg-card/70 lg:backdrop-blur-xl lg:p-5 lg:shadow-[var(--shadow-soft)] lg:space-y-5">
       <div className="hidden lg:block">
         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           Your conversion
@@ -96,7 +99,8 @@ export type PickerOption = {
 
 /**
  * DEX-style selector: a pill trigger (icon + symbol) that opens a searchable
- * list. Keyboard and screen-reader friendly (Radix popover + cmdk list).
+ * list. Keyboard and screen-reader friendly (Radix popover + cmdk list). On
+ * phones the list opens as a bottom sheet instead of a small popover.
  */
 export function Picker({
   value,
@@ -120,73 +124,111 @@ export function Picker({
   footer?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const mobile = useIsMobile();
   const selected = options.find((o) => o.value === value) ?? null;
+  const trigger = (
+    <button
+      type="button"
+      aria-haspopup="listbox"
+      data-state={open ? "open" : "closed"}
+      onClick={mobile ? () => setOpen(true) : undefined}
+      className={`group inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-border/70 bg-background/90 pl-1.5 pr-3 py-1.5 text-sm font-semibold shadow-sm transition-all hover:border-primary/50 hover:shadow-[0_0_0_4px_oklch(0.52_0.22_275/0.08)] data-[state=open]:border-primary/60 data-[state=open]:shadow-[0_0_0_4px_oklch(0.52_0.22_275/0.12)] [-webkit-tap-highlight-color:transparent] active:scale-[0.97] ${triggerClassName}`}
+    >
+      {selected ? (
+        <>
+          {selected.icon}
+          <span className="truncate">{selected.label}</span>
+        </>
+      ) : (
+        <span className="pl-2 text-muted-foreground font-medium">{placeholder}</span>
+      )}
+      <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+    </button>
+  );
+  const list = (
+    <Command>
+      {/* text-base on phones: iOS zooms the page into inputs smaller than 16px. */}
+      <CommandInput placeholder={searchPlaceholder} className="h-11 text-base sm:text-sm" />
+      <CommandList className={mobile ? "max-h-[55vh]" : "max-h-72"}>
+        <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
+          {emptyText}
+        </CommandEmpty>
+        <CommandGroup heading={mobile ? undefined : heading}>
+          {options.map((o) => (
+            <CommandItem
+              key={o.value}
+              value={`${o.label} ${o.sublabel ?? ""} ${(o.keywords ?? []).join(" ")}`}
+              disabled={o.disabled}
+              onSelect={() => {
+                if (o.disabled) return;
+                onChange(o.value);
+                setOpen(false);
+              }}
+              className={`flex items-center gap-3 rounded-xl px-3 cursor-pointer data-[disabled=true]:opacity-50 data-[disabled=true]:cursor-not-allowed ${mobile ? "py-3" : "py-2.5"}`}
+            >
+              {o.icon}
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold truncate">{o.label}</span>
+                {o.sublabel && (
+                  <span className="block text-xs text-muted-foreground truncate">{o.sublabel}</span>
+                )}
+              </span>
+              {o.right}
+              {o.value === value && <Check className="w-4 h-4 text-primary" />}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      </CommandList>
+      {footer && (
+        <div className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+          {footer}
+        </div>
+      )}
+    </Command>
+  );
+
+  if (mobile) {
+    return (
+      <>
+        {trigger}
+        <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false}>
+          <DrawerContent className="rounded-t-[28px] border-border/60 pb-[env(safe-area-inset-bottom)]">
+            <DrawerTitle className="px-5 pt-3 pb-1 text-base font-semibold">
+              {heading ?? searchPlaceholder}
+            </DrawerTitle>
+            <div className="px-2 pb-2">{list}</div>
+          </DrawerContent>
+        </Drawer>
+      </>
+    );
+  }
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-haspopup="listbox"
-          className={`group inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/90 pl-1.5 pr-3 py-1.5 text-sm font-semibold shadow-sm transition-all hover:border-primary/50 hover:shadow-[0_0_0_4px_oklch(0.52_0.22_275/0.08)] data-[state=open]:border-primary/60 data-[state=open]:shadow-[0_0_0_4px_oklch(0.52_0.22_275/0.12)] ${triggerClassName}`}
-        >
-          {selected ? (
-            <>
-              {selected.icon}
-              <span className="truncate">{selected.label}</span>
-            </>
-          ) : (
-            <span className="pl-2 text-muted-foreground font-medium">{placeholder}</span>
-          )}
-          <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-        </button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align="end"
         sideOffset={8}
         className="w-[min(92vw,340px)] p-0 rounded-2xl border-border/70 shadow-[var(--shadow-elegant)] overflow-hidden"
       >
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} className="h-11" />
-          <CommandList className="max-h-72">
-            <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
-              {emptyText}
-            </CommandEmpty>
-            <CommandGroup heading={heading}>
-              {options.map((o) => (
-                <CommandItem
-                  key={o.value}
-                  value={`${o.label} ${o.sublabel ?? ""} ${(o.keywords ?? []).join(" ")}`}
-                  disabled={o.disabled}
-                  onSelect={() => {
-                    if (o.disabled) return;
-                    onChange(o.value);
-                    setOpen(false);
-                  }}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 cursor-pointer data-[disabled=true]:opacity-50 data-[disabled=true]:cursor-not-allowed"
-                >
-                  {o.icon}
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold truncate">{o.label}</span>
-                    {o.sublabel && (
-                      <span className="block text-xs text-muted-foreground truncate">
-                        {o.sublabel}
-                      </span>
-                    )}
-                  </span>
-                  {o.right}
-                  {o.value === value && <Check className="w-4 h-4 text-primary" />}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-          {footer && (
-            <div className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-              {footer}
-            </div>
-          )}
-        </Command>
+        {list}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * Phones only: the page's primary action, pinned above the bottom tab bar so
+ * it stays in thumb reach while the form scrolls. Renders a spacer so the
+ * page's last content is never hidden behind it.
+ */
+export function MobileActionBar({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <div aria-hidden className="h-32 sm:hidden" />
+      <div className="sm:hidden fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-border/60 bg-background/90 backdrop-blur-xl px-4 pt-3 pb-3 shadow-[0_-12px_30px_-18px_oklch(0.52_0.22_275/0.35)] print:hidden">
+        {children}
+      </div>
+    </>
   );
 }
 

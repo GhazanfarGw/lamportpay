@@ -72,10 +72,12 @@ export function ModeBadge() {
         aria-expanded={open}
         aria-label={`${indicator.label}. ${indicator.detail}`}
         onClick={() => setOpen((v) => !v)}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-extrabold tracking-wider ${TONE[indicator.tone]}`}
+        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 sm:px-3 py-1.5 text-[11px] font-extrabold tracking-wider ${TONE[indicator.tone]}`}
       >
         <Icon className={`w-3.5 h-3.5 ${indicator.tone === "loading" ? "animate-spin" : ""}`} />
-        {indicator.label}
+        {/* Phones: "TEST" / "LIVE"; the full label fits from sm up. */}
+        <span className="sm:hidden">{indicator.label.replace(/ MODE$/, "")}</span>
+        <span className="hidden sm:inline">{indicator.label}</span>
       </button>
       {open && (
         <>
@@ -85,7 +87,7 @@ export function ModeBadge() {
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-border bg-card p-3 text-sm shadow-[var(--shadow-elegant)] space-y-3">
+          <div className="fixed inset-x-4 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 z-50 mt-2 sm:w-72 rounded-xl border border-border bg-card p-3 text-sm shadow-[var(--shadow-elegant)] space-y-3">
             <div>
               <div className="font-semibold">{indicator.label}</div>
               <p className="mt-1 text-xs text-muted-foreground">{indicator.detail}</p>

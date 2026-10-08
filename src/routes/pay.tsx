@@ -28,6 +28,7 @@ import {
 import {
   DappWorkspace,
   GlowCard,
+  MobileActionBar,
   Picker,
   RailCard,
   Skeleton,
@@ -42,6 +43,7 @@ import {
   TestPayIsland,
 } from "@/components/site/wallet/WalletIsland";
 import { formatMinor, toMajor, toMinor } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import type { PayoutCountry } from "@/lib/payout-countries";
 import { requestWalletConnect, requestWalletSignIn, useAppWallet } from "@/lib/wallet-state";
 import { chargesFee, splitTotal, type FeeModel } from "@/lib/payments/fee-math";
@@ -198,7 +200,7 @@ function PayPage() {
         </Notice>
       )}
       {mode.indicator.tone === "test" && (
-        <Notice tone="info">
+        <Notice tone="info" collapsible>
           <strong>TEST MODE</strong> · no real funds can move. Balances are Solana devnet test
           assets, the payout partner runs in its sandbox, and swaps are priced live but not executed
           (Jupiter runs on mainnet only).
@@ -823,6 +825,30 @@ function ConvertForm({
                     : "Getting the live price…"
                   : "Get live quote";
 
+  const ctaDisabled =
+    create.isPending ||
+    signingIn ||
+    (!needsSignIn &&
+      !differentWallet &&
+      walletKey !== null &&
+      (!ready || blocked || belowMin || aboveMax));
+  // One primary action, placed per screen size (phone bar, tablet form, xl panel).
+  // cn() so the visibility classes win over PRIMARY's inline-flex.
+  const ctaButton = (className: string) => (
+    <button
+      type="button"
+      onClick={submit}
+      disabled={ctaDisabled}
+      className={cn(PRIMARY, className)}
+    >
+      {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+      {ctaLabel}
+      {walletKey && ready && !blocked && !aboveMax && !belowMin && (
+        <ArrowRight className="w-4 h-4" />
+      )}
+    </button>
+  );
+
   const rail = (
     <RailCard footer={<TrustList />}>
       <DappStepper current={step} />
@@ -842,7 +868,7 @@ function ConvertForm({
         >
           <div className="flex items-center justify-between gap-3 pb-1">
             <div>
-              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+              <h1 className="text-[1.35rem] leading-tight sm:text-2xl font-semibold tracking-tight">
                 Convert crypto to <span className="text-uv">your bank account</span>
               </h1>
               <p className="text-sm text-muted-foreground mt-0.5">
@@ -959,8 +985,8 @@ function ConvertForm({
           </div>
 
           {/* Arrow */}
-          <div className="relative flex justify-center -my-6 z-10" aria-hidden>
-            <span className="grid place-items-center w-11 h-11 rounded-2xl border-4 border-card bg-[image:var(--gradient-hero)] text-white shadow-[var(--shadow-elegant)]">
+          <div className="relative flex justify-center -my-5 sm:-my-6 z-10" aria-hidden>
+            <span className="grid place-items-center w-10 h-10 sm:w-11 sm:h-11 rounded-2xl border-4 border-card bg-[image:var(--gradient-hero)] text-white shadow-[var(--shadow-elegant)]">
               <ArrowDown className="w-5 h-5" />
             </span>
           </div>
@@ -1024,24 +1050,8 @@ function ConvertForm({
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={
-              create.isPending ||
-              signingIn ||
-              (!needsSignIn &&
-                !differentWallet &&
-                walletKey !== null &&
-                (!ready || blocked || belowMin || aboveMax))
-            }
-            className={`${PRIMARY} w-full justify-center py-4 text-base mt-2 xl:hidden`}
-          >
-            {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            {ctaLabel}
-            {walletKey && ready && !blocked && !aboveMax && !belowMin && (
-              <ArrowRight className="w-4 h-4" />
-            )}
-          </button>
+          {/* Tablets; phones use the action bar, xl the summary panel. */}
+          {ctaButton("hidden sm:flex xl:hidden w-full justify-center py-4 text-base mt-2")}
           {needsSignIn && (
             <div className="xl:hidden">
               <EmailSignInHint next={emailSignInNext} />
@@ -1156,7 +1166,7 @@ function ConvertForm({
             <div className="px-4 py-2.5">
               <div className="flex justify-between gap-3">
                 <span className="font-medium">LamportPay + payout partner fees</span>
-                <span className="tabular-nums font-semibold">
+                <span className="tabular-nums font-semibold whitespace-nowrap">
                   {mergedFee !== null ? (
                     `−${mergedFee} USD`
                   ) : estimate.isLoading ? (
@@ -1266,25 +1276,7 @@ function ConvertForm({
               has no devnet). Your payment continues in test USDC and no SOL is spent.
             </Notice>
           )}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={
-              create.isPending ||
-              signingIn ||
-              (!needsSignIn &&
-                !differentWallet &&
-                walletKey !== null &&
-                (!ready || blocked || belowMin || aboveMax))
-            }
-            className={`${PRIMARY} w-full justify-center py-3.5 text-base hidden xl:inline-flex`}
-          >
-            {create.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            {ctaLabel}
-            {walletKey && ready && !blocked && !aboveMax && !belowMin && (
-              <ArrowRight className="w-4 h-4" />
-            )}
-          </button>
+          {ctaButton("hidden xl:flex w-full justify-center py-3.5 text-base")}
           {needsSignIn && (
             <div className="hidden xl:block">
               <EmailSignInHint next={emailSignInNext} />
@@ -1305,6 +1297,28 @@ function ConvertForm({
       <div className="lg:hidden px-1">
         <TrustList />
       </div>
+      <MobileActionBar>
+        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">You receive</span>
+          <span
+            className={`tabular-nums truncate transition-opacity ${updating ? "opacity-60" : ""}`}
+          >
+            {priced ? (
+              <>
+                <span className="text-base font-bold text-uv">{grouped(priced.receives)}</span>{" "}
+                <span className="font-semibold text-muted-foreground">{currency}</span>
+              </>
+            ) : estimate.isFetching ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <span className="text-muted-foreground">
+                {destination ? "Enter an amount" : "Choose a country"}
+              </span>
+            )}
+          </span>
+        </div>
+        {ctaButton("flex w-full justify-center py-3.5 text-base")}
+      </MobileActionBar>
     </>
   );
 
@@ -2741,7 +2755,17 @@ function KV({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
-function Notice({ tone, children }: { tone: "info" | "warn"; children: ReactNode }) {
+function Notice({
+  tone,
+  children,
+  collapsible = false,
+}: {
+  tone: "info" | "warn";
+  children: ReactNode;
+  /** Phones: show two lines and a "More" toggle, so long notes don't push the form down. */
+  collapsible?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <div
       className={`flex items-start gap-2 rounded-xl px-4 py-3 text-sm ${
@@ -2753,7 +2777,20 @@ function Notice({ tone, children }: { tone: "info" | "warn"; children: ReactNode
       <AlertCircle
         className={`w-4 h-4 shrink-0 mt-0.5 ${tone === "warn" ? "text-destructive" : "text-primary"}`}
       />
-      <span>{children}</span>
+      <span className="min-w-0">
+        <span className={collapsible && !expanded ? "max-sm:line-clamp-2" : undefined}>
+          {children}
+        </span>
+        {collapsible && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="sm:hidden mt-1 text-xs font-semibold text-primary"
+          >
+            {expanded ? "Less" : "More"}
+          </button>
+        )}
+      </span>
     </div>
   );
 }
