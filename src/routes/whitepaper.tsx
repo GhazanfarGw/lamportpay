@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { SiteLayout } from "@/components/site/Layout";
 import { pageSeo } from "@/lib/seo";
 import { FurtherReading } from "@/components/site/blog/FurtherReading";
+import { ROADMAP_NOTE, ROADMAP_PHASES } from "@/content/roadmap";
 
 export const Route = createFileRoute("/whitepaper")({
   head: () =>
@@ -188,16 +189,15 @@ const sections: { title: string; body: React.ReactNode }[] = [
   {
     title: "15. Roadmap",
     body: (
-      <List
-        items={[
-          "Phase 1: Demo website",
-          "Phase 2: Backend MVP",
-          "Phase 3: Phantom wallet + Solana devnet",
-          "Phase 4: Jupiter quote/swap integration",
-          "Phase 5: payout partner sandbox integration",
-          "Phase 6: Controlled live pilot after legal and partner approval",
-        ]}
-      />
+      <div className="space-y-3">
+        <List
+          items={ROADMAP_PHASES.map(
+            (p) =>
+              `Phase ${p.phase}: ${p.title}${p.status === "current" ? " (current focus)" : ""}`,
+          )}
+        />
+        <p className="text-sm">{ROADMAP_NOTE}</p>
+      </div>
     ),
   },
   {
