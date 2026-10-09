@@ -30,6 +30,11 @@ import {
 import { useState } from "react";
 import { pageSeo } from "@/lib/seo";
 import { FurtherReading } from "@/components/site/blog/FurtherReading";
+import {
+  EcosystemSection,
+  FutureVisionSection,
+  RoadmapSection,
+} from "@/components/site/VisionRoadmapEcosystem";
 
 export const Route = createFileRoute("/")({
   head: () =>
@@ -63,6 +68,9 @@ function Index() {
       <AIAssistant />
       <FeeExplainer />
       <SafetyAssistant />
+      <FutureVisionSection />
+      <RoadmapSection />
+      <EcosystemSection />
       <FinalCTA />
       <FurtherReading slugs={["crypto-to-fiat-payments-explained", "why-stablecoins-settle-cross-border-payments", "solana-payments-for-developers"]} />
     </SiteLayout>
@@ -393,12 +401,12 @@ function KV({ k, v }: { k: string; v: string }) {
 function FeeExplainer() {
   const rows = [
     {
-      k: "Partner payout fee",
-      v: "A small fee (1% of amount, minimum $1) charged by the regulated settlement partner for processing the local-currency payout.",
+      k: "Payout partner fee",
+      v: "The licensed payout partner's own fee for the local-currency payout, taken from its live quote and shown on a separate line.",
     },
     {
-      k: "LamportPay platform fee",
-      v: "A flat 0.5% platform fee that keeps the service running and improving.",
+      k: "LamportPay fee",
+      v: "One 2.0% fee on the total you send, taken out of it (send 150 USDC: 3.00 fee, 147.00 goes to the payout partner). Charged once per payment and shown as its own line in every quote.",
     },
     {
       k: "FX rate",
