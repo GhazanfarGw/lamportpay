@@ -184,7 +184,7 @@ export function PaymentReceipt({
             />
           </Section>
 
-          <Section title="Bank account (your own)">
+          <Section title="Payout bank account">
             <Row k="Account holder" v={account.holderName ?? "—"} />
             <Row
               k={account.kind === "iban" ? "IBAN" : "Account number"}

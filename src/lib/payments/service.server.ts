@@ -1210,21 +1210,41 @@ export async function quotePayment(
 }
 
 /**
- * The user's own bank account. There is no holder name or recipient type: the
- * holder is always the user, named as on their approved Stables record.
+ * The payout bank account. Without `holderName` it is the user's own account,
+ * named as on their approved Stables record. With `holderName` it is a
+ * beneficiary's account (owner decision 2026-10-11: a verified user may pay
+ * out to anyone's bank account; Stables allows third-party payouts).
  */
 export type BeneficiaryInput = {
+  /** A beneficiary's name; absent = the user's own account. */
+  holderName?: string;
+  recipientType?: "individual" | "business";
   bankName: string;
   accountNumber?: string;
   iban?: string;
-  /** The user's own date of birth and address, only when Stables asks for them. */
+  /** The account holder's date of birth and address, only when Stables asks for them. */
   dateOfBirth?: string;
   address?: { street: string; city: string; state: string; postalCode: string; country: string };
   /** Any further bank fields; Stables says which ones a destination needs. */
   details?: Partial<Record<BankDetailField, string>>;
 };
 
-export const OWN_ACCOUNT_MESSAGE = "Payouts can only be sent to a bank account in your own name.";
+export const OWN_ACCOUNT_MESSAGE =
+  "To pay out to your own account we need the name on your verified profile.";
+
+/** Collapse spaces; names compare case-insensitively. */
+function cleanName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+/** True when the payout goes to the user's own account (no beneficiary name, or the same name). */
+export function isOwnAccount(beneficiaryName: string | undefined, ownName: string | null): boolean {
+  if (!beneficiaryName) return true;
+  return (
+    Boolean(ownName) &&
+    cleanName(beneficiaryName).toLowerCase() === cleanName(ownName!).toLowerCase()
+  );
+}
 
 function mask(value: string | undefined): string | null {
   return value ? `••••${value.replace(/\s+/g, "").slice(-4)}` : null;
@@ -1247,7 +1267,7 @@ function toBankBeneficiary(
   return {
     ...details,
     type: "bank",
-    recipient_type: "individual",
+    recipient_type: input.recipientType ?? "individual",
     account_holder_name: holderName,
     bank_name: input.bankName,
     bank_country: payment.destination_country,
@@ -1387,13 +1407,13 @@ export async function createPaymentTransfer(
   }
   const sourceCurrency = currencyOf(payment);
 
-  // Own account only: Stables requires the account holder name to match its
-  // customer record, so the name comes from the live, approved record and
-  // never from the browser.
+  // The sender must be a verified Stables customer. For the user's own
+  // account the holder name comes from the live, approved record (never the
+  // browser); for a beneficiary it is the name the user entered.
   const stored = await ledger.getStablesCustomerForUser(user.id);
   if (!stored)
     throw new PaymentError("Verify your identity with Stables first.", 409, "kyc_required");
-  let holderName: string | null;
+  let ownName: string | null;
   try {
     const live = await stables.getCustomer(config, stored.stables_customer_id);
     const customer = await syncCustomer(user.id, stored, live, "api");
@@ -1406,9 +1426,22 @@ export async function createPaymentTransfer(
     if (!isCustomerApproved(customer)) {
       throw new PaymentError("Identity verification is not complete.", 409, "kyc_required");
     }
-    holderName = customerName(live);
+    ownName = customerName(live);
   } catch (e) {
     rethrow(e);
+  }
+  const beneficiaryName = input.beneficiary.holderName
+    ? cleanName(input.beneficiary.holderName)
+    : undefined;
+  const ownAccount = isOwnAccount(beneficiaryName, ownName);
+  const holderName = beneficiaryName ?? ownName;
+  if (!ownAccount && input.purposeCode === "TRANSFER_TO_OWN_ACCOUNT") {
+    throw new PaymentError(
+      "Choose the purpose of this payment to the beneficiary.",
+      400,
+      "purpose_required",
+      { fields: [{ field: "purpose_code", message: "Choose a purpose." }] },
+    );
   }
   if (!holderName) {
     throw new PaymentError(
@@ -1546,8 +1579,8 @@ export async function createPaymentTransfer(
       transfer_snapshot: redactTransfer(transfer),
       purpose_code: input.purposeCode,
       beneficiary_summary: {
-        recipient_type: "individual",
-        own_account: true,
+        recipient_type: input.beneficiary.recipientType ?? "individual",
+        own_account: ownAccount,
         account_holder_name: holderName,
         bank_name: input.beneficiary.bankName,
         bank_country: payment.destination_country,
@@ -1597,7 +1630,11 @@ export async function checkPayoutDetails(
   user: AuthenticatedUser,
   paymentId: string,
   input: { beneficiary: BeneficiaryInput; holderName?: string },
-): Promise<{ valid: true; holderName: string; holderSource: "verified_record" | "entered" }> {
+): Promise<{
+  valid: true;
+  holderName: string;
+  holderSource: "verified_record" | "entered" | "beneficiary";
+}> {
   const config = requireStables();
   const payment = await ownedPayment(user, paymentId);
   const open: PaymentState[] = ["PAYMENT_CREATED", "KYC_PENDING", "KYC_APPROVED", "QUOTED"];
@@ -1616,7 +1653,17 @@ export async function checkPayoutDetails(
     );
   }
   const verifiedName = stored && isCustomerApproved(stored) ? customerName(stored) : null;
-  const holderName = verifiedName ?? input.holderName?.trim().replace(/\s+/g, " ");
+  const ownName = verifiedName ?? (input.holderName ? cleanName(input.holderName) : null);
+  const beneficiaryName = input.beneficiary.holderName
+    ? cleanName(input.beneficiary.holderName)
+    : undefined;
+  const toBeneficiary = !isOwnAccount(beneficiaryName, ownName);
+  const holderSource = toBeneficiary
+    ? ("beneficiary" as const)
+    : verifiedName
+      ? ("verified_record" as const)
+      : ("entered" as const);
+  const holderName = toBeneficiary ? beneficiaryName : ownName;
   if (!holderName || holderName.length < 3 || holderName.length > 140) {
     throw new PaymentError(
       "Enter your full name exactly as it appears on your ID.",
@@ -1636,14 +1683,10 @@ export async function checkPayoutDetails(
     detail: {
       bank_name: input.beneficiary.bankName,
       account: mask(input.beneficiary.iban ?? input.beneficiary.accountNumber),
-      holder_source: verifiedName ? "verified_record" : "entered",
+      holder_source: holderSource,
     },
   });
-  return {
-    valid: true,
-    holderName,
-    holderSource: verifiedName ? "verified_record" : "entered",
-  };
+  return { valid: true, holderName, holderSource };
 }
 
 // ------------------------------------------------------------------ funding

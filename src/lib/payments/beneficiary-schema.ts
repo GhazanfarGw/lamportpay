@@ -1,5 +1,5 @@
 /**
- * The user's own bank account as the API accepts it (shared by the payout
+ * The payout bank account as the API accepts it (shared by the payout
  * details check and the transfer). Field names follow Stables; which ones a
  * destination needs is Stables' rule (src/lib/payout-requirements.ts).
  */
@@ -33,10 +33,14 @@ export const BankDetailsSchema = z
   } satisfies Record<BankDetailField, z.ZodTypeAny>)
   .strict();
 
-// The user's own account only: no holder name or recipient type is accepted
-// here; the holder is the verified (or, before verification, the entered) name.
+// The payout account: the user's own (no holderName: the holder is the
+// verified, or before verification the entered, name) or a beneficiary's
+// (holderName + recipientType; owner decision 2026-10-11, Stables allows
+// third-party payouts for a verified sender).
 export const BeneficiarySchema = z
   .object({
+    holderName: z.string().trim().min(3).max(140).optional(),
+    recipientType: z.enum(["individual", "business"]).optional(),
     bankName: z.string().trim().min(2).max(140),
     accountNumber: optional,
     iban: optional,

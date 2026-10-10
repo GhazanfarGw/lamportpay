@@ -1359,7 +1359,7 @@ describe("reconciliation job", () => {
   });
 });
 
-// ------------------------------------------------------- own-account payouts
+// ------------------------------------------------------- own-account payouts (default)
 
 describe("payouts to the user's own account", () => {
   it("names the account holder from the approved Stables record, never the browser", async () => {
@@ -1945,6 +1945,91 @@ describe("quote before verification (NEXT FLOW)", () => {
       }),
     ).rejects.toMatchObject({ status: expect.any(Number) });
     expect(api.createTransfer).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------- beneficiary (third-party) payouts
+
+describe("payouts to a beneficiary's account (owner decision 2026-10-11)", () => {
+  const TO_SOMEONE = {
+    ...BENEFICIARY,
+    holderName: "  Ravi   Kumar ",
+    recipientType: "individual" as const,
+  };
+
+  it("sends the beneficiary's name to Stables and records it as not the user's own", async () => {
+    const payment = await quotedPayment();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_b1", newWallet(), "75"));
+    await service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "FAMILY_MAINTENANCE",
+      beneficiary: TO_SOMEONE,
+    });
+    const sent = api.createTransfer.mock.lastCall![1];
+    expect(sent.destination).toMatchObject({
+      account_holder_name: "Ravi Kumar",
+      recipient_type: "individual",
+    });
+    expect(paymentRow(payment.id)["beneficiary_summary"]).toMatchObject({
+      own_account: false,
+      account_holder_name: "Ravi Kumar",
+    });
+  });
+
+  it("sends a business beneficiary as a business recipient", async () => {
+    const payment = await quotedPayment();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_b2", newWallet(), "75"));
+    await service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "VENDOR_CONTRACTOR_PAYOUTS",
+      beneficiary: { ...TO_SOMEONE, holderName: "Acme Supplies Ltd", recipientType: "business" },
+    });
+    expect(api.createTransfer.mock.lastCall![1].destination).toMatchObject({
+      account_holder_name: "Acme Supplies Ltd",
+      recipient_type: "business",
+    });
+  });
+
+  it("refuses a beneficiary payout labelled as a transfer to the user's own account", async () => {
+    const payment = await quotedPayment();
+    await expect(
+      service.createPaymentTransfer(user, payment.id, {
+        purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+        beneficiary: TO_SOMEONE,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "purpose_required" });
+    expect(api.createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("treats the user's own verified name as their own account", async () => {
+    const payment = await quotedPayment();
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    api.createTransfer.mockResolvedValueOnce(transfer("tr_b3", newWallet(), "75"));
+    await service.createPaymentTransfer(user, payment.id, {
+      purposeCode: "TRANSFER_TO_OWN_ACCOUNT",
+      beneficiary: { ...BENEFICIARY, holderName: "asha  rao" },
+    });
+    expect(paymentRow(payment.id)["beneficiary_summary"]).toMatchObject({ own_account: true });
+  });
+
+  it("still requires the sender to be verified before a beneficiary payout", async () => {
+    const payment = await createPayment("75");
+    await expect(
+      service.createPaymentTransfer(user, payment.id, {
+        purposeCode: "FAMILY_MAINTENANCE",
+        beneficiary: TO_SOMEONE,
+      }),
+    ).rejects.toMatchObject({ status: expect.any(Number) });
+    expect(api.createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("checks a beneficiary's details under the beneficiary's name", async () => {
+    const payment = await quotedPayment();
+    await service.getKycStatus(user);
+    api.validatePaymentMethod.mockResolvedValueOnce({ valid: true });
+    const result = await service.checkPayoutDetails(user, payment.id, { beneficiary: TO_SOMEONE });
+    expect(result).toEqual({ valid: true, holderName: "Ravi Kumar", holderSource: "beneficiary" });
+    expect(JSON.stringify(api.validatePaymentMethod.mock.calls[0]![1])).toContain("Ravi Kumar");
   });
 });
 
