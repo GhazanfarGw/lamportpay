@@ -396,7 +396,7 @@ function KycCard({ compact = false }: { compact?: boolean }) {
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-[color:var(--success)]" />
           {data.verifiedName
-            ? `Verified by Stables as ${data.verifiedName}. You can send payments to your own bank account.`
+            ? `Verified by Stables as ${data.verifiedName}. You can send payments to your own or a beneficiary's bank account.`
             : "Verified by Stables. You can send payments."}
         </div>
       )}
@@ -2186,6 +2186,11 @@ function QuoteLine({
 }
 
 type BeneficiaryState = {
+  /** Paying out to the user's own account (default) or a beneficiary's. */
+  toSelf: boolean;
+  recipientName: string;
+  recipientType: "individual" | "business";
+  purpose: string;
   firstName: string;
   lastName: string;
   email: string;
@@ -2198,8 +2203,10 @@ type BeneficiaryState = {
   postalCode: string;
 };
 
-/** What the transfer API takes as the user's own bank account. */
+/** What the transfer API takes as the payout bank account (own or a beneficiary's). */
 type BeneficiaryBody = {
+  holderName?: string;
+  recipientType?: "individual" | "business";
   bankName: string;
   accountNumber: string;
   address?: { street: string; city: string; state: string; postalCode: string; country: string };
@@ -2210,8 +2217,23 @@ type BeneficiaryBody = {
 type CheckedDetails = {
   beneficiary: BeneficiaryBody;
   holderName: string;
-  holderSource: "verified_record" | "entered";
+  holderSource: "verified_record" | "entered" | "beneficiary";
+  /** Stables purpose code; a beneficiary payout can't be TRANSFER_TO_OWN_ACCOUNT. */
+  purposeCode?: string;
 };
+
+/** Purposes offered for a payout to someone else (Stables purpose codes). */
+const BENEFICIARY_PURPOSES: { code: string; label: string }[] = [
+  { code: "FAMILY_MAINTENANCE", label: "Family support" },
+  { code: "PERSONAL_REMITTANCE", label: "Personal transfer" },
+  { code: "PAYMENT_FOR_SERVICES", label: "Payment for services" },
+  { code: "VENDOR_CONTRACTOR_PAYOUTS", label: "Vendor or contractor payout" },
+  { code: "SALARY", label: "Salary" },
+  { code: "EDUCATION_EXPENSES", label: "Education" },
+  { code: "MEDICAL_TREATMENT", label: "Medical treatment" },
+  { code: "PAYMENT_OF_PROPERTY_RENTAL", label: "Property rental" },
+  { code: "DONATIONS", label: "Donation" },
+];
 
 const CHECKED_KEY = (paymentId: string) => `lamportpay:payout-details:${paymentId}`;
 
@@ -2313,7 +2335,10 @@ function CheckoutFlow({
     const view = (
       await paymentApi<PaymentView>(`/api/payments/${payment.id}/transfer`, {
         method: "POST",
-        body: { purposeCode: "TRANSFER_TO_OWN_ACCOUNT", beneficiary: checked.beneficiary },
+        body: {
+          purposeCode: checked.purposeCode ?? "TRANSFER_TO_OWN_ACCOUNT",
+          beneficiary: checked.beneficiary,
+        },
       })
     ).data;
     writeCheckedDetails(payment.id, null);
@@ -2506,6 +2531,10 @@ function PayoutDetailsStep({
   });
   const needsEmail = !registered && account.data === false;
   const [form, setForm] = useState<BeneficiaryState>({
+    toSelf: true,
+    recipientName: "",
+    recipientType: "individual",
+    purpose: "",
     firstName: "",
     lastName: "",
     email: "",
@@ -2540,6 +2569,10 @@ function PayoutDetailsStep({
           .filter(([, v]) => v),
       );
       const beneficiary: BeneficiaryBody = {
+        ...(!form.toSelf && {
+          holderName: form.recipientName.trim().replace(/\s+/g, " "),
+          recipientType: form.recipientType,
+        }),
         bankName: form.bankName.trim(),
         accountNumber: form.account.replace(/\s/g, ""),
         ...(fields.includes("address") && {
@@ -2578,7 +2611,12 @@ function PayoutDetailsStep({
         ).data;
         queryClient.setQueryData(["kyc"], status);
       }
-      return { beneficiary, ...result };
+      return {
+        beneficiary,
+        ...result,
+        purposeCode:
+          result.holderSource === "beneficiary" ? form.purpose : "TRANSFER_TO_OWN_ACCOUNT",
+      };
     },
     onSuccess: onChecked,
   });
@@ -2632,7 +2670,12 @@ function PayoutDetailsStep({
         </div>
         <div className="rounded-2xl bg-secondary/50 px-4 py-3 text-sm">
           <div className="font-semibold">
-            {(kyc?.state === "kyc_verified" && kyc.verifiedName) || checked.holderName}
+            {checked.holderSource === "beneficiary"
+              ? checked.holderName
+              : (kyc?.state === "kyc_verified" && kyc.verifiedName) || checked.holderName}
+            {checked.holderSource === "beneficiary" && (
+              <span className="ml-2 text-xs font-medium text-muted-foreground">Beneficiary</span>
+            )}
           </div>
           <div className="text-muted-foreground">
             {checked.beneficiary.bankName} · ••••{checked.beneficiary.accountNumber.slice(-4)} ·{" "}
@@ -2651,10 +2694,32 @@ function PayoutDetailsStep({
   return (
     <Card>
       <div>
-        <h2 className="text-base font-semibold">Your bank account</h2>
+        <h2 className="text-base font-semibold">Payout bank account</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          In your own name · {countryName(payment.destination.country)} · {currency}
+          {form.toSelf ? "In your own name" : "A beneficiary's account"} ·{" "}
+          {countryName(payment.destination.country)} · {currency}
         </p>
+      </div>
+      <div role="radiogroup" aria-label="Who receives the money" className="grid grid-cols-2 gap-2">
+        {[
+          { value: true, label: "My own account" },
+          { value: false, label: "Someone else" },
+        ].map((opt) => (
+          <button
+            key={opt.label}
+            type="button"
+            role="radio"
+            aria-checked={form.toSelf === opt.value}
+            onClick={() => set({ toSelf: opt.value })}
+            className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+              form.toSelf === opt.value
+                ? "border-primary bg-primary/10 text-foreground"
+                : "border-border text-muted-foreground hover:bg-secondary/60"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
       <form
         ref={formRef}
@@ -2681,7 +2746,7 @@ function PayoutDetailsStep({
             </div>
           ) : (
             <>
-              <Field label="First name">
+              <Field label={form.toSelf ? "First name" : "Your first name"}>
                 <input
                   required
                   placeholder="As on your ID"
@@ -2691,7 +2756,7 @@ function PayoutDetailsStep({
                   className={cls("holder_name")}
                 />
               </Field>
-              <Field label="Last name">
+              <Field label={form.toSelf ? "Last name" : "Your last name"}>
                 <input
                   required
                   placeholder="As on your ID"
@@ -2717,6 +2782,53 @@ function PayoutDetailsStep({
                   </Field>
                 </div>
               )}
+            </>
+          )}
+          {!form.toSelf && (
+            <>
+              <div className="sm:col-span-2">
+                <Field label="Beneficiary's full name">
+                  <input
+                    required
+                    minLength={3}
+                    maxLength={140}
+                    placeholder="As on their bank account"
+                    autoComplete="off"
+                    value={form.recipientName}
+                    onChange={(e) => set({ recipientName: e.target.value })}
+                    className={cls("holder_name")}
+                  />
+                  {hint("holder_name")}
+                </Field>
+              </div>
+              <Field label="Beneficiary type">
+                <select
+                  value={form.recipientType}
+                  onChange={(e) =>
+                    set({ recipientType: e.target.value as BeneficiaryState["recipientType"] })
+                  }
+                  className={INPUT}
+                >
+                  <option value="individual">Individual</option>
+                  <option value="business">Business</option>
+                </select>
+              </Field>
+              <Field label="Purpose of payment">
+                <select
+                  required
+                  value={form.purpose}
+                  onChange={(e) => set({ purpose: e.target.value })}
+                  className={cls("purpose_code")}
+                >
+                  <option value="">Choose a purpose</option>
+                  {BENEFICIARY_PURPOSES.map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                {hint("purpose_code")}
+              </Field>
             </>
           )}
           <Field label="Bank name">

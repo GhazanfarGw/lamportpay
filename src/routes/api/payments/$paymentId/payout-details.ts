@@ -8,13 +8,13 @@ import { checkPayoutDetails } from "@/lib/payments/service.server";
 const Input = z
   .object({
     beneficiary: BeneficiarySchema,
-    /** New customers only; a verified customer's verified name always wins. */
+    /** The user's own name, new customers only; a verified customer's verified name always wins. */
     holderName: z.string().trim().min(3).max(140).optional(),
   })
   .strict();
 
 /**
- * POST /api/payments/:paymentId/payout-details — check the user's own bank
+ * POST /api/payments/:paymentId/payout-details — check the payout bank
  * details with Stables (its per-currency rules) before verification and before
  * anything is created. Nothing is stored but a masked audit event; the full
  * details go to Stables again, once, when the user presses Pay Now.

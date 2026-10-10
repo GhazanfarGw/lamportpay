@@ -32,9 +32,14 @@ Change these only on the owner's instruction.
   and/or maximum (`LAMPORTPAY_FEE_MIN` / `LAMPORTPAY_FEE_MAX`, or admin); a fixed fee is 0% with
   min = max. Both are OFF by default, so the approved plain 2% is unchanged. All fee arithmetic
   lives in `src/lib/payments/fee-math.ts`; each payment records the bounds and the rule applied.
-- **Own-account bank payouts only.** The account holder name is locked to the Stables
-  customer record (`first_name` / `last_name` from verification) and is not editable. No
-  third-party recipients, and no mobile wallet, card or cash payouts.
+- **Bank payouts to the user's own account or a beneficiary's (owner decision 2026-10-11,
+  replacing "own account only"; Stables allows third-party payouts for a verified sender).**
+  Own account (default): the holder name is locked to the Stables customer record
+  (`first_name` / `last_name` from verification). Beneficiary: the user enters the
+  beneficiary's name, type (individual/business) and a purpose code other than
+  `TRANSFER_TO_OWN_ACCOUNT`; `beneficiary_summary.own_account` records which. The sender must
+  still be a verified Stables customer before any transfer. No mobile wallet, card or cash
+  payouts.
 - **Country picker = `PAYOUT_COUNTRIES`** (server env; default in `src/lib/payout-countries.ts` = the
   sandbox-evidenced list from 2026-09-29; production list OPEN, C36). TEST MODE default (owner, 8 Oct):
   only US, GB, IN, PH — the destinations Stables' sandbox completes (`TEST_MODE_PAYOUT_COUNTRIES`). It only filters the /pay
