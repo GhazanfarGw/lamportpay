@@ -474,13 +474,18 @@ function statusSteps(p: PaymentView): TimelineStep[] {
   });
   if (p.platformFee) {
     const settled = p.platformFee.settled;
+    // TEST MODE: Pay Now signs a devnet memo that moves no funds and the deposit is simulated,
+    // so no fee is ever transferred. Show that plainly instead of leaving the step "pending".
+    const testNoFunds = settled !== true && !p.funding && !!(p.testPayment || p.simulatedDeposit);
     steps.push({
       key: "fee",
       label: "LamportPay fee settled",
-      state: settled === true ? "done" : settled === false ? "skipped" : "pending",
+      state: settled === true ? "done" : settled === false || testNoFunds ? "skipped" : "pending",
       detail:
         settled === false ? (
           "Not included in the transaction"
+        ) : testNoFunds ? (
+          "Test mode: no funds moved, so no fee was charged"
         ) : p.funding && settled ? (
           <TxLink signature={p.funding.signature} label="Same transaction" />
         ) : undefined,
